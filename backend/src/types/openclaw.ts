@@ -42,6 +42,15 @@ export interface GatewayConfig {
   trustedProxies: string[]
 }
 
+export interface ChannelConfig {
+  enabled: boolean
+  dmPolicy?: 'pairing' | 'allowlist' | 'open' | 'disabled'
+  allowFrom?: (string | number)[]
+  [key: string]: unknown
+}
+
+export type ChannelMap = Record<string, ChannelConfig>
+
 export interface OpenclawConfig {
   meta?: {
     lastTouchedVersion?: string
@@ -53,6 +62,7 @@ export interface OpenclawConfig {
   agents: {
     defaults: AgentDefaults
   }
+  channels?: ChannelMap
   commands?: {
     native?: string
     nativeSkills?: string
