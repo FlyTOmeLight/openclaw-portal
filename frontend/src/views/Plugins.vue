@@ -11,7 +11,7 @@
           <div class="plugin-name">{{ p.name }}</div>
           <div class="plugin-desc">{{ p.description }} <span class="version">v{{ p.version }}</span></div>
         </div>
-        <button @click="uninstall(p.name)" class="btn sm danger">卸载</button>
+        <button @click="uninstall(p.name)" class="btn btn-sm btn-danger">卸载</button>
       </div>
     </div>
 
@@ -20,8 +20,8 @@
       <h2>安装插件</h2>
       <p class="hint">输入 npm 包名（如 <code>@openclaw-china/channels</code>），需要网络访问或预置离线包。</p>
       <div class="install-row">
-        <input v-model="packageName" placeholder="@openclaw-china/channels" @keyup.enter="doInstall" />
-        <button @click="doInstall" :disabled="!packageName || store.loading" class="btn primary">
+        <input v-model="packageName" placeholder="@openclaw-china/channels" @keyup.enter="doInstall" class="form-input" />
+        <button @click="doInstall" :disabled="!packageName || store.loading" class="btn btn-primary">
           {{ store.loading ? '安装中...' : '安装' }}
         </button>
       </div>
@@ -58,23 +58,17 @@ async function uninstall(name: string) {
 </script>
 
 <style scoped>
-h1 { font-size: 22px; margin-bottom: 24px; }
-h2 { font-size: 15px; margin-bottom: 14px; }
-.section { margin-bottom: 32px; }
-.plugin-row { display: flex; justify-content: space-between; align-items: center; background: white; border-radius: 8px; padding: 14px 16px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-.plugin-name { font-weight: 600; font-size: 14px; }
-.plugin-desc { font-size: 13px; color: #6b7280; margin-top: 2px; }
-.version { background: #f3f4f6; padding: 1px 6px; border-radius: 8px; font-size: 11px; }
-.card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.08); max-width: 560px; }
-.hint { font-size: 13px; color: #6b7280; margin-bottom: 14px; }
-.hint code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
-.install-row { display: flex; gap: 8px; }
-.install-row input { flex: 1; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; font-size: 14px; background: white; }
-.btn.primary { background: #2563eb; color: white; border-color: #2563eb; }
-.btn.danger { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
-.btn.sm { padding: 5px 10px; font-size: 12px; }
-.btn:disabled { opacity: .4; }
-.error-msg { color: #dc2626; font-size: 13px; margin-top: 10px; }
-.empty { color: #9ca3af; font-size: 14px; }
+h1 { font-size: var(--text-xl); font-weight: 700; margin-bottom: var(--space-6); letter-spacing: -.3px; }
+h2 { font-size: var(--text-md); font-weight: 600; margin-bottom: var(--space-3); }
+.section { margin-bottom: var(--space-8); }
+.plugin-row { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4); margin-bottom: var(--space-2); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.plugin-name { font-weight: 600; font-size: var(--text-sm); }
+.plugin-desc { font-size: var(--text-xs); color: var(--text-secondary); margin-top: 2px; }
+.version { background: var(--surface-2); padding: 1px 6px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text-muted); }
+.hint { font-size: var(--text-sm); color: var(--text-secondary); margin-bottom: var(--space-3); }
+.hint code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); }
+.install-row { display: flex; gap: var(--space-2); }
+.install-row input { flex: 1; }
+.error-msg { color: var(--error-text); font-size: var(--text-sm); margin-top: var(--space-3); }
+.empty { color: var(--text-muted); font-size: var(--text-sm); }
 </style>

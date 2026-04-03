@@ -12,8 +12,8 @@
           <span v-if="id === store.primary" class="primary-badge">主模型</span>
         </div>
         <div class="prov-actions">
-          <button @click="setPrimary(id as string)" class="btn sm" :disabled="id === store.primary">设为主模型</button>
-          <button @click="deleteProvider(id as string)" class="btn sm danger">删除</button>
+          <button @click="setPrimary(id as string)" class="btn btn-sm" :disabled="id === store.primary">设为主模型</button>
+          <button @click="deleteProvider(id as string)" class="btn btn-sm btn-danger">删除</button>
         </div>
       </div>
       <p v-if="Object.keys(store.providers).length === 0" class="empty">暂无配置，请添加下方</p>
@@ -44,7 +44,7 @@
       </div>
       <div class="form-actions">
         <button @click="testConnection" class="btn">测试连通性</button>
-        <button @click="saveProvider" class="btn primary" :disabled="store.loading">保存</button>
+        <button @click="saveProvider" class="btn btn-primary" :disabled="store.loading">保存</button>
       </div>
       <div v-if="store.testResult === 'ok'" class="test-ok">✓ 连通性测试通过</div>
       <div v-if="store.testResult === 'fail'" class="test-fail">✗ {{ store.testError }}</div>
@@ -86,25 +86,20 @@ async function setPrimary(id: string) {
 </script>
 
 <style scoped>
-h1 { font-size: 22px; margin-bottom: 24px; }
-h2 { font-size: 16px; margin-bottom: 16px; }
-.section { margin-bottom: 32px; }
-.card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.08); max-width: 560px; }
-.provider-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: white; border-radius: 8px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-.prov-info { display: flex; align-items: center; gap: 12px; }
-.url { color: #6b7280; font-size: 13px; }
-.primary-badge { background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+h1 { font-size: var(--text-xl); font-weight: 700; margin-bottom: var(--space-6); letter-spacing: -.3px; }
+h2 { font-size: var(--text-md); font-weight: 600; margin-bottom: var(--space-4); }
+.section { margin-bottom: var(--space-8); }
+.provider-row { display: flex; justify-content: space-between; align-items: center; padding: var(--space-3) var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: var(--space-2); }
+.prov-info { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.primary-badge { background: var(--accent-subtle); color: var(--accent-text); padding: 2px 8px; border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: 500; }
+.url { color: var(--text-secondary); font-size: var(--text-xs); font-family: var(--font-mono); }
 .prov-actions { display: flex; gap: 6px; }
 .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.form-row label { font-size: 13px; color: #374151; font-weight: 500; }
-.form-row input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
-.form-actions { display: flex; gap: 8px; margin-top: 16px; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; font-size: 14px; background: white; }
-.btn.primary { background: #2563eb; color: white; border-color: #2563eb; }
-.btn.danger  { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
-.btn.sm { padding: 4px 10px; font-size: 12px; }
-.btn:disabled { opacity: .4; }
-.test-ok   { margin-top: 10px; color: #059669; font-size: 13px; }
-.test-fail { margin-top: 10px; color: #dc2626; font-size: 13px; }
-.empty { color: #9ca3af; font-size: 14px; }
+.form-row label { font-size: var(--text-sm); color: var(--text-primary); font-weight: 500; }
+.form-row input { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: var(--text-base); font-family: var(--font-sans); background: var(--surface); color: var(--text-primary); outline: none; transition: border-color .15s; }
+.form-row input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 3px rgba(217,119,6,.1); }
+.form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+.test-ok   { margin-top: var(--space-3); color: var(--success-text); font-size: var(--text-sm); font-weight: 500; }
+.test-fail { margin-top: var(--space-3); color: var(--error-text); font-size: var(--text-sm); }
+.empty { color: var(--text-muted); font-size: var(--text-sm); }
 </style>

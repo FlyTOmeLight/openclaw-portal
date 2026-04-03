@@ -1,39 +1,119 @@
 <template>
-  <div class="layout">
+  <div class="app-shell">
     <nav class="sidebar">
-      <div class="logo">🦞 OpenClaw</div>
-      <div class="nav-group">
-        <div class="nav-label">主要</div>
-        <RouterLink to="/">仪表盘</RouterLink>
-        <RouterLink to="/chat">聊天</RouterLink>
-        <RouterLink to="/filebrowser">文件管理</RouterLink>
+      <div class="sidebar-logo">
+        <span class="logo-icon">🦞</span>
+        <span class="logo-text">OpenClaw</span>
       </div>
-      <div class="nav-group">
-        <div class="nav-label">配置</div>
-        <RouterLink to="/models">模型配置</RouterLink>
-        <RouterLink to="/channels">Channel 管理</RouterLink>
-        <RouterLink to="/plugins">插件管理</RouterLink>
-        <RouterLink to="/skills">技能管理</RouterLink>
-        <RouterLink to="/agents">Agent 概览</RouterLink>
+
+      <div class="nav-section">
+        <p class="nav-section-label">主要</p>
+        <RouterLink to="/" class="nav-item">
+          <span class="nav-icon">◻</span> 仪表盘
+        </RouterLink>
+        <RouterLink to="/chat" class="nav-item">
+          <span class="nav-icon">💬</span> 聊天
+        </RouterLink>
+        <RouterLink to="/filebrowser" class="nav-item">
+          <span class="nav-icon">📁</span> 文件管理
+        </RouterLink>
+      </div>
+
+      <div class="nav-section">
+        <p class="nav-section-label">配置</p>
+        <RouterLink to="/models" class="nav-item">
+          <span class="nav-icon">🤖</span> 模型配置
+        </RouterLink>
+        <RouterLink to="/channels" class="nav-item">
+          <span class="nav-icon">📡</span> Channel
+        </RouterLink>
+        <RouterLink to="/plugins" class="nav-item">
+          <span class="nav-icon">🧩</span> 插件
+        </RouterLink>
+        <RouterLink to="/skills" class="nav-item">
+          <span class="nav-icon">⚡</span> 技能
+        </RouterLink>
+        <RouterLink to="/agents" class="nav-item">
+          <span class="nav-icon">🧠</span> Agents
+        </RouterLink>
       </div>
     </nav>
-    <main class="content">
+
+    <main class="main-content">
       <RouterView />
     </main>
   </div>
 </template>
 
 <style scoped>
-.layout { display: flex; height: 100vh; font-family: system-ui, sans-serif; }
-.sidebar {
-  width: 210px; background: #1a1a2e; color: #eee; padding: 20px 14px;
-  display: flex; flex-direction: column; gap: 0; overflow-y: auto; flex-shrink: 0;
+.app-shell {
+  display: flex;
+  height: 100vh;
+  background: var(--bg);
+  overflow: hidden;
 }
-.logo { font-size: 17px; font-weight: bold; margin-bottom: 20px; padding: 0 4px; }
-.nav-group { margin-bottom: 16px; }
-.nav-label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #555; padding: 0 12px; margin-bottom: 4px; }
-.sidebar a { display: block; color: #aaa; text-decoration: none; padding: 7px 12px; border-radius: 6px; font-size: 14px; }
-.sidebar a.router-link-active { background: #16213e; color: #fff; }
-.sidebar a:hover:not(.router-link-active) { background: #0f0f23; color: #ddd; }
-.content { flex: 1; overflow-y: auto; padding: 32px; background: #f5f5f5; min-width: 0; }
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 10px;
+  gap: 0;
+  overflow-y: auto;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 20px;
+  border-bottom: 1px solid #292524;
+  margin-bottom: 12px;
+}
+.logo-icon { font-size: 20px; }
+.logo-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: #FAFAF9;
+  letter-spacing: -.2px;
+}
+
+.nav-section { margin-bottom: 20px; }
+.nav-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--sidebar-label);
+  padding: 0 10px;
+  margin-bottom: 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  transition: background .12s, color .12s;
+}
+.nav-item:hover { background: var(--sidebar-hover); color: #E7E5E4; }
+.nav-item.router-link-active {
+  background: var(--sidebar-active);
+  color: var(--sidebar-active-text);
+}
+.nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+  min-width: 0;
+}
 </style>

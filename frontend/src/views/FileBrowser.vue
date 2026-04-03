@@ -3,8 +3,8 @@
     <div class="fb-header">
       <span class="fb-title">📁 文件管理</span>
       <div class="fb-actions">
-        <a :href="fbUrl" target="_blank" class="btn sm">在新标签打开</a>
-        <button @click="reload" class="btn sm">刷新</button>
+        <a :href="fbUrl" target="_blank" class="btn btn-sm">在新标签打开</a>
+        <button @click="reload" class="btn btn-sm">刷新</button>
       </div>
     </div>
 
@@ -49,15 +49,12 @@ function reload() { iframeKey.value++ }
 </script>
 
 <style scoped>
-.fb-root { display: flex; flex-direction: column; height: calc(100vh - 64px); background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; }
-.fb-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-bottom: 1px solid #e5e7eb; }
-.fb-title { font-weight: 600; font-size: 16px; }
-.fb-actions { display: flex; gap: 8px; }
+.fb-root { display: flex; flex-direction: column; height: calc(100vh - 96px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--shadow); overflow: hidden; }
+.fb-header { display: flex; justify-content: space-between; align-items: center; padding: 13px 20px; border-bottom: 1px solid var(--border); }
+.fb-title { font-weight: 600; font-size: var(--text-md); }
+.fb-actions { display: flex; gap: var(--space-2); }
 .fb-frame { flex: 1; border: none; width: 100%; }
-.state-msg { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #6b7280; font-size: 14px; text-align: center; }
-.state-msg.error { color: #b91c1c; }
-.state-msg .sub { font-size: 13px; margin-top: 8px; color: #6b7280; }
-.state-msg code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
-.btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; font-size: 13px; background: white; text-decoration: none; }
-.btn.sm { padding: 4px 10px; font-size: 12px; }
+.state-msg { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-secondary); font-size: var(--text-sm); gap: var(--space-2); }
+.state-msg.error { color: var(--error-text); }
+.state-msg code { background: var(--surface-2); padding: 2px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); }
 </style>

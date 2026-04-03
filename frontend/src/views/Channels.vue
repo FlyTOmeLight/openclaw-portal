@@ -2,14 +2,14 @@
   <div>
     <div class="page-header">
       <h1>Channel 管理</h1>
-      <button @click="showAdd = true" class="btn primary">+ 添加 Channel</button>
+      <button @click="showAdd = true" class="btn btn-primary">+ 添加 Channel</button>
     </div>
 
     <!-- Status panel -->
     <div v-if="store.statusRaw" class="status-panel">
       <pre>{{ store.statusRaw }}</pre>
     </div>
-    <button @click="store.fetchStatus()" :disabled="store.loading" class="btn sm mb">
+    <button @click="store.fetchStatus()" :disabled="store.loading" class="btn btn-sm mb">
       {{ store.loading ? '查询中...' : '查询运行状态' }}
     </button>
 
@@ -19,19 +19,19 @@
     </div>
 
     <div class="channel-list">
-      <div v-for="(cfg, name) in store.channels" :key="name" class="channel-card">
+      <div v-for="(cfg, name) in store.channels" :key="name" class="card channel-card">
         <div class="ch-header">
           <div class="ch-name-row">
             <span class="ch-icon">{{ channelIcon(name as string) }}</span>
             <span class="ch-name">{{ name }}</span>
           </div>
           <div class="ch-controls">
-            <span :class="['badge', cfg.enabled ? 'on' : 'off']">{{ cfg.enabled ? '已启用' : '已禁用' }}</span>
-            <button @click="toggleEnabled(name as string, cfg)" class="btn sm">
+            <span :class="['badge', cfg.enabled ? 'badge-success' : 'badge-muted']">{{ cfg.enabled ? '已启用' : '已禁用' }}</span>
+            <button @click="toggleEnabled(name as string, cfg)" class="btn btn-sm">
               {{ cfg.enabled ? '禁用' : '启用' }}
             </button>
-            <button @click="startEdit(name as string, cfg)" class="btn sm">编辑</button>
-            <button @click="remove(name as string)" class="btn sm danger">删除</button>
+            <button @click="startEdit(name as string, cfg)" class="btn btn-sm">编辑</button>
+            <button @click="remove(name as string)" class="btn btn-sm btn-danger">删除</button>
           </div>
         </div>
         <div class="ch-fields">
@@ -45,11 +45,11 @@
     <!-- Add / Edit modal -->
     <div v-if="showAdd || editName" class="modal-overlay" @click.self="closeModal">
       <div class="modal">
-        <h2>{{ editName ? `编辑 ${editName}` : '添加 Channel' }}</h2>
+        <h2 class="modal-title">{{ editName ? `编辑 ${editName}` : '添加 Channel' }}</h2>
 
         <div v-if="!editName" class="form-row">
           <label>Channel 类型</label>
-          <select v-model="form.name" @change="applyTemplate">
+          <select v-model="form.name" @change="applyTemplate" class="form-select">
             <option value="">请选择...</option>
             <option v-for="t in CHANNEL_TEMPLATES" :key="t.name" :value="t.name">{{ t.label }}</option>
           </select>
@@ -57,16 +57,16 @@
 
         <div v-for="field in currentFields" :key="field.key" class="form-row">
           <label>{{ field.label }}</label>
-          <select v-if="field.type === 'select'" v-model="(form.config as any)[field.key]">
+          <select v-if="field.type === 'select'" v-model="(form.config as any)[field.key]" class="form-select">
             <option v-for="o in field.options" :key="o" :value="o">{{ o }}</option>
           </select>
-          <input v-else-if="field.type === 'password'" type="password" v-model="(form.config as any)[field.key]" :placeholder="field.placeholder ?? ''" />
-          <input v-else v-model="(form.config as any)[field.key]" :placeholder="field.placeholder ?? ''" />
+          <input v-else-if="field.type === 'password'" type="password" v-model="(form.config as any)[field.key]" :placeholder="field.placeholder ?? ''" class="form-input" />
+          <input v-else v-model="(form.config as any)[field.key]" :placeholder="field.placeholder ?? ''" class="form-input" />
         </div>
 
-        <div class="modal-actions">
+        <div class="modal-footer">
           <button @click="closeModal" class="btn">取消</button>
-          <button @click="saveChannel" :disabled="!form.name && !editName" class="btn primary">保存</button>
+          <button @click="saveChannel" :disabled="!form.name && !editName" class="btn btn-primary">保存</button>
         </div>
       </div>
     </div>
@@ -225,33 +225,17 @@ function displayFields(cfg: any): Record<string, any> {
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-h1 { font-size: 22px; }
-.mb { margin-bottom: 20px; }
-.empty { color: #9ca3af; font-size: 14px; margin-top: 8px; }
-.channel-list { display: flex; flex-direction: column; gap: 12px; }
-.channel-card { background: white; border-radius: 10px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,.07); }
-.ch-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+.mb { margin-bottom: var(--space-5); }
+.status-panel { background: #1C1917; color: #A6E3A1; font-family: var(--font-mono); font-size: var(--text-xs); padding: var(--space-4); border-radius: var(--radius); margin-bottom: var(--space-3); white-space: pre-wrap; max-height: 180px; overflow-y: auto; border: 1px solid #292524; }
+.channel-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.ch-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); flex-wrap: wrap; gap: var(--space-2); }
 .ch-name-row { display: flex; align-items: center; gap: 8px; }
-.ch-icon { font-size: 20px; }
-.ch-name { font-weight: 700; font-size: 15px; }
+.ch-icon { font-size: 18px; }
+.ch-name { font-weight: 700; font-size: var(--text-md); }
 .ch-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 500; }
-.badge.on { background: #d1fae5; color: #065f46; }
-.badge.off { background: #f3f4f6; color: #9ca3af; }
-.ch-fields { display: flex; flex-wrap: wrap; gap: 6px; }
-.field-chip { font-size: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px 8px; color: #374151; }
-.status-panel { background: #1e1e2e; color: #a6e3a1; font-family: monospace; font-size: 13px; padding: 14px; border-radius: 8px; margin-bottom: 12px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; font-size: 14px; background: white; }
-.btn.primary { background: #2563eb; color: white; border-color: #2563eb; }
-.btn.danger { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
-.btn.sm { padding: 4px 10px; font-size: 12px; }
-.btn:disabled { opacity: .4; }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: white; border-radius: 12px; padding: 28px; min-width: 420px; max-width: 520px; max-height: 80vh; overflow-y: auto; }
-.modal h2 { margin-bottom: 20px; font-size: 16px; }
+.ch-fields { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.field-chip { font-size: var(--text-xs); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 2px 8px; color: var(--text-secondary); }
+.empty { color: var(--text-muted); font-size: var(--text-sm); margin-top: 8px; }
 .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-.form-row label { font-size: 13px; font-weight: 500; color: #374151; }
-.form-row input, .form-row select { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.form-row label { font-size: var(--text-sm); font-weight: 500; color: var(--text-primary); }
 </style>

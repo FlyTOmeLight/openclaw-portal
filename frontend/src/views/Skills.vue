@@ -2,7 +2,7 @@
   <div>
     <div class="page-header">
       <h1>技能管理</h1>
-      <button @click="showUpload = true" class="btn primary">安装技能包</button>
+      <button @click="showUpload = true" class="btn btn-primary">安装技能包</button>
     </div>
 
     <!-- Upload modal -->
@@ -20,9 +20,9 @@
             <option v-for="a in agents" :key="a" :value="a">{{ a }}</option>
           </select>
         </div>
-        <div class="modal-actions">
+        <div class="modal-footer">
           <button @click="showUpload = false" class="btn">取消</button>
-          <button @click="doInstall" :disabled="!uploadFile" class="btn primary">安装</button>
+          <button @click="doInstall" :disabled="!uploadFile" class="btn btn-primary">安装</button>
         </div>
       </div>
     </div>
@@ -82,20 +82,12 @@ const groups = computed(() => {
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-h1 { font-size: 22px; }
-h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
-.count { font-size: 13px; color: #9ca3af; font-weight: 400; }
-.group { margin-bottom: 32px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; font-size: 14px; background: white; }
-.btn.primary { background: #2563eb; color: white; border-color: #2563eb; }
-.btn:disabled { opacity: .4; }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: white; border-radius: 12px; padding: 28px; min-width: 400px; }
-.modal h2 { margin-bottom: 20px; font-size: 16px; }
+h1 { font-size: var(--text-xl); font-weight: 700; margin-bottom: var(--space-6); letter-spacing: -.3px; }
+h2 { font-size: var(--text-md); font-weight: 600; margin-bottom: var(--space-3); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); }
+.group { margin-bottom: var(--space-8); }
+.count { font-size: var(--text-xs); color: var(--text-muted); font-weight: 400; }
 .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
-.form-row label { font-size: 13px; font-weight: 500; }
-.form-row input, .form-row select { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.form-row label { font-size: var(--text-sm); font-weight: 500; color: var(--text-primary); }
+.form-row input, .form-row select { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: var(--text-base); font-family: var(--font-sans); background: var(--surface); color: var(--text-primary); outline: none; }
 </style>

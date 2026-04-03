@@ -12,10 +12,10 @@
         <p v-if="svc.pid" class="meta">PID: {{ svc.pid }}</p>
         <p v-if="svc.error" class="err">{{ svc.error }}</p>
         <div class="actions">
-          <button @click="svc.start()" :disabled="svc.state === 'running' || svc.loading" class="btn primary">启动</button>
-          <button @click="svc.stop()" :disabled="svc.state !== 'running' || svc.loading" class="btn danger">停止</button>
+          <button @click="svc.start()" :disabled="svc.state === 'running' || svc.loading" class="btn btn-primary">启动</button>
+          <button @click="svc.stop()" :disabled="svc.state !== 'running' || svc.loading" class="btn btn-danger">停止</button>
           <button @click="svc.restart()" :disabled="svc.loading" class="btn">重启</button>
-          <RouterLink to="/chat" class="btn chat">进入聊天 →</RouterLink>
+          <RouterLink to="/chat" class="btn btn-primary">进入聊天 →</RouterLink>
         </div>
       </div>
     </div>
@@ -38,8 +38,8 @@
           <div class="stat-label">内存使用</div>
           <div class="stat-value">{{ sys.stats.system.memory.usedPercent }}%</div>
           <div class="stat-sub">{{ sys.stats.system.memory.freeMb }} MB 可用 / {{ sys.stats.system.memory.totalMb }} MB</div>
-          <div class="progress-bar">
-            <div class="progress-fill" :style="{ width: sys.stats.system.memory.usedPercent + '%' }" />
+          <div class="progress">
+            <div class="progress-bar" :style="{ width: sys.stats.system.memory.usedPercent + '%' }" />
           </div>
         </div>
       </div>
@@ -104,29 +104,21 @@ function formatUptime(seconds: number): string {
 </script>
 
 <style scoped>
-h1 { font-size: 22px; margin-bottom: 24px; }
-.row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
-.card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+h1 { font-size: var(--text-xl); font-weight: 700; margin-bottom: var(--space-6); letter-spacing: -.3px; }
+.row { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-5); }
 .wide { flex: 1; min-width: 320px; }
 .stat-card { display: flex; align-items: flex-start; gap: 14px; min-width: 180px; flex: 1; }
-.stat-icon { font-size: 24px; line-height: 1; margin-top: 2px; }
+.stat-icon { font-size: 22px; line-height: 1; margin-top: 2px; }
 .stat-body { flex: 1; min-width: 0; }
-.stat-label { font-size: 12px; color: #9ca3af; margin-bottom: 4px; }
-.stat-value { font-size: 22px; font-weight: 700; color: #111; line-height: 1.1; }
-.stat-value.small { font-size: 14px; font-weight: 600; word-break: break-all; }
-.stat-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
-.stat-link { font-size: 12px; color: #2563eb; text-decoration: none; margin-top: 4px; display: block; }
-.progress-bar { height: 6px; background: #f3f4f6; border-radius: 3px; margin-top: 8px; overflow: hidden; }
-.progress-fill { height: 100%; background: #2563eb; border-radius: 3px; transition: width .3s; }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.card-title { font-size: 16px; font-weight: 600; }
-.meta { color: #6b7280; font-size: 13px; margin: 0 0 12px; }
-.err { color: #ef4444; font-size: 13px; margin-bottom: 10px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; font-size: 14px; background: white; text-decoration: none; display: inline-flex; align-items: center; }
-.btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn.primary { background: #2563eb; color: white; border-color: #2563eb; }
-.btn.danger  { background: #ef4444; color: white; border-color: #ef4444; }
-.btn.chat    { background: #059669; color: white; border-color: #059669; }
-.hint { color: #9ca3af; font-size: 14px; }
+.stat-label { font-size: var(--text-xs); color: var(--text-secondary); margin-bottom: 4px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+.stat-value { font-size: 24px; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+.stat-value.small { font-size: var(--text-sm); font-weight: 600; word-break: break-all; }
+.stat-sub { font-size: var(--text-xs); color: var(--text-muted); margin-top: 3px; }
+.stat-link { font-size: var(--text-xs); color: var(--accent); text-decoration: none; margin-top: 4px; display: block; font-weight: 500; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3); }
+.card-title { font-size: var(--text-md); font-weight: 600; }
+.meta { color: var(--text-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+.err { color: var(--error-text); font-size: var(--text-sm); margin-bottom: var(--space-2); }
+.actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+.hint { color: var(--text-muted); font-size: var(--text-sm); }
 </style>
