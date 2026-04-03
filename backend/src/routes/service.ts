@@ -24,8 +24,12 @@ export async function serviceRoutes(app: FastifyInstance, processManager: Proces
     }
   })
 
-  app.post('/api/service/restart', async () => {
-    await processManager.restart()
-    return { ok: true }
+  app.post('/api/service/restart', async (req, reply) => {
+    try {
+      await processManager.restart()
+      return { ok: true }
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message })
+    }
   })
 }

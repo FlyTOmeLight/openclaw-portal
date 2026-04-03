@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 import { PluginManager } from '../src/services/plugin-manager.js'
 
 vi.mock('child_process', () => ({
-  execSync: vi.fn().mockReturnValue(Buffer.from('')),
+  spawnSync: vi.fn().mockReturnValue({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }),
 }))
 import * as cp from 'child_process'
 
@@ -42,16 +42,18 @@ describe('PluginManager', () => {
 
   it('install() calls openclaw plugins install', async () => {
     await manager.install('@openclaw-china/dingtalk')
-    expect(cp.execSync).toHaveBeenCalledWith(
-      'openclaw plugins install @openclaw-china/dingtalk',
+    expect(cp.spawnSync).toHaveBeenCalledWith(
+      'openclaw',
+      ['plugins', 'install', '@openclaw-china/dingtalk'],
       expect.any(Object)
     )
   })
 
   it('uninstall() calls openclaw plugins uninstall', async () => {
     await manager.uninstall('@openclaw-china/channels')
-    expect(cp.execSync).toHaveBeenCalledWith(
-      'openclaw plugins uninstall @openclaw-china/channels',
+    expect(cp.spawnSync).toHaveBeenCalledWith(
+      'openclaw',
+      ['plugins', 'uninstall', '@openclaw-china/channels'],
       expect.any(Object)
     )
   })

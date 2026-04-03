@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'fs/promises'
 import { join } from 'path'
-import { execSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 
 export interface Plugin {
@@ -8,6 +8,8 @@ export interface Plugin {
   version: string
   description: string
 }
+
+const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(@[\d.]+)?$/
 
 export class PluginManager {
   private readonly pluginsDir: string
@@ -55,10 +57,22 @@ export class PluginManager {
   }
 
   async install(packageName: string): Promise<void> {
-    execSync(`${this.openclawBin} plugins install ${packageName}`, { stdio: 'pipe' })
+    if (!PKG_NAME_RE.test(packageName)) {
+      throw new Error(`Invalid package name: ${packageName}`)
+    }
+    const result = spawnSync(this.openclawBin, ['plugins', 'install', packageName], { stdio: 'pipe' })
+    if (result.status !== 0) {
+      throw new Error(result.stderr?.toString() || 'Plugin install failed')
+    }
   }
 
   async uninstall(packageName: string): Promise<void> {
-    execSync(`${this.openclawBin} plugins uninstall ${packageName}`, { stdio: 'pipe' })
+    if (!PKG_NAME_RE.test(packageName)) {
+      throw new Error(`Invalid package name: ${packageName}`)
+    }
+    const result = spawnSync(this.openclawBin, ['plugins', 'uninstall', packageName], { stdio: 'pipe' })
+    if (result.status !== 0) {
+      throw new Error(result.stderr?.toString() || 'Plugin uninstall failed')
+    }
   }
 }
