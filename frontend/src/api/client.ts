@@ -48,4 +48,32 @@ export const api = {
     list: () => req<any[]>('GET', '/agents'),
     updateSoul: (name: string, soul: string) => req<{ ok: boolean }>('PUT', `/agents/${name}/soul`, { soul }),
   },
+  channels: {
+    list: () => req<Record<string, any>>('GET', '/channels'),
+    upsert: (name: string, config: any) => req<{ ok: boolean }>('PUT', `/channels/${name}`, config),
+    remove: (name: string) => req<{ ok: boolean }>('DELETE', `/channels/${name}`),
+    status: () => req<{ raw: string }>('GET', '/channels/status'),
+  },
+  system: {
+    stats: () => req<{
+      system: { cpuCount: number; platform: string; uptimeSeconds: number; memory: { totalMb: number; freeMb: number; usedPercent: number } }
+      service: { state: string; pid?: number }
+      model: string | null
+      channelCount: number
+    }>('GET', '/system/stats'),
+  },
+  chat: {
+    // Returns a raw Response for streaming
+    complete: (messages: any[]) => fetch('/api/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, stream: true }),
+    }),
+    uploadFile: (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return fetch('/api/chat/file', { method: 'POST', body: form }).then(r => r.json()) as
+        Promise<{ type: 'image' | 'text'; filename: string; mimeType: string; dataUrl?: string; content?: string }>
+    },
+  },
 }
