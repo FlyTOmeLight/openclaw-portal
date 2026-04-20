@@ -1,6 +1,18 @@
 {
   "name": "openclaw-portal-backend",
   "version": "0.1.0",
+  "description": "Fastify + TypeScript backend for the OpenClaw self-service management portal.",
+  "license": "MIT",
+  "author": "FlyTOmeLight",
+  "homepage": "https://github.com/FlyTOmeLight/openclaw-portal#readme",
+  "bugs": {
+    "url": "https://github.com/FlyTOmeLight/openclaw-portal/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FlyTOmeLight/openclaw-portal.git",
+    "directory": "backend"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -10,13 +22,16 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.0",
     "@fastify/multipart": "^9.0.0",
     "@fastify/static": "^8.0.0",
+    "@fastify/websocket": "^11.2.0",
     "fastify": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0"

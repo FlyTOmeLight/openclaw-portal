@@ -5,6 +5,7 @@ import { api } from '../api/client.js'
 export const usePluginsStore = defineStore('plugins', () => {
   const plugins = ref<any[]>([])
   const loading = ref(false)
+  const lastCommand = ref<{ command: string; stdout: string; stderr: string } | null>(null)
 
   async function load() {
     plugins.value = await api.plugins.list()
@@ -13,17 +14,21 @@ export const usePluginsStore = defineStore('plugins', () => {
   async function install(packageName: string) {
     loading.value = true
     try {
-      await api.plugins.install(packageName)
-      await load()
+      const res = await api.plugins.install(packageName)
+      plugins.value = res.plugins
+      lastCommand.value = res.result
+      return res
     } finally {
       loading.value = false
     }
   }
 
   async function uninstall(name: string) {
-    await api.plugins.uninstall(name)
-    await load()
+    const res = await api.plugins.uninstall(name)
+    plugins.value = res.plugins
+    lastCommand.value = res.result
+    return res
   }
 
-  return { plugins, loading, load, install, uninstall }
+  return { plugins, loading, lastCommand, load, install, uninstall }
 })

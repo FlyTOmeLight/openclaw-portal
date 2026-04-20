@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { api } from '../api/client.js'
 
 export const useServiceStore = defineStore('service', () => {
-  const state = ref<'running' | 'stopped' | 'error'>('stopped')
+  const state = ref<'running' | 'stopped' | 'error' | 'restarting'>('stopped')
   const pid = ref<number | undefined>()
   const loading = ref(false)
   const error = ref<string | null>(null)

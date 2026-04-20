@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdtemp, rm, writeFile, readFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { ChannelManager } from '../src/services/channel-manager.js'
 
 vi.mock('child_process', () => ({
-  spawnSync: vi.fn().mockReturnValue({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }),
+  execFile: vi.fn((_: string, __: string[], ___: any, cb: (err: any, stdout?: string, stderr?: string) => void) => {
+    cb(null, '', '')
+  }),
 }))
-import * as cp from 'child_process'
+
+import { ChannelManager } from '../src/services/channel-manager.js'
 
 const BASE_CONFIG = {
   models: { providers: {} },
@@ -37,47 +39,103 @@ describe('ChannelManager', () => {
     await rm(tmpDir, { recursive: true })
   })
 
-  it('listChannels() returns empty object when no channels configured', async () => {
-    const channels = await manager.listChannels()
-    expect(channels).toEqual({})
-  })
-
-  it('listChannels() returns configured channels', async () => {
-    const cfg = { ...BASE_CONFIG, channels: { telegram: { enabled: true, botToken: 'tok' } } }
+  it('listConfiguredPlatforms returns platform ids and account summaries', async () => {
+    const cfg = {
+      ...BASE_CONFIG,
+      channels: {
+        telegram: { enabled: true, botToken: 'tok' },
+        feishu: {
+          enabled: true,
+          accounts: {
+            teamA: { appId: 'cli-a', appSecret: 'sec-a' },
+            teamB: { appId: 'cli-b', appSecret: 'sec-b' },
+          },
+        },
+        'dingtalk-connector': { enabled: false, clientId: 'ding', clientSecret: 'sec' },
+      },
+    }
     await writeFile(configPath, JSON.stringify(cfg, null, 2))
-    const channels = await manager.listChannels()
-    expect(channels['telegram']).toMatchObject({ enabled: true, botToken: 'tok' })
+
+    const platforms = await manager.listConfiguredPlatforms()
+    expect(platforms).toEqual([
+      { id: 'telegram', enabled: true, accounts: [] },
+      { id: 'feishu', enabled: true, accounts: [{ accountId: 'teamA', appId: 'cli-a' }, { accountId: 'teamB', appId: 'cli-b' }] },
+      { id: 'dingtalk', enabled: false, accounts: [] },
+    ])
   })
 
-  it('upsertChannel() adds a new channel to openclaw.json', async () => {
-    await manager.upsertChannel('telegram', { enabled: true, botToken: 'abc123', dmPolicy: 'pairing' })
-    const channels = await manager.listChannels()
-    expect(channels['telegram'].botToken).toBe('abc123')
+  it('readPlatformConfig reads qqbot credentials from nested default account', async () => {
+    const cfg = {
+      ...BASE_CONFIG,
+      channels: {
+        qqbot: {
+          enabled: true,
+          accounts: {
+            default: { appId: '10001', clientSecret: 'secret-1', token: '10001:secret-1' },
+          },
+        },
+      },
+    }
+    await writeFile(configPath, JSON.stringify(cfg, null, 2))
+
+    await expect(manager.readPlatformConfig('qqbot')).resolves.toEqual({
+      exists: true,
+      values: { appId: '10001', clientSecret: 'secret-1' },
+    })
   })
 
-  it('upsertChannel() updates existing channel', async () => {
-    await manager.upsertChannel('telegram', { enabled: true, botToken: 'old' })
-    await manager.upsertChannel('telegram', { enabled: false, botToken: 'new' })
-    const channels = await manager.listChannels()
-    expect(channels['telegram'].enabled).toBe(false)
-    expect(channels['telegram'].botToken).toBe('new')
+  it('saveMessagingPlatform stores multi-account feishu entries under accounts', async () => {
+    await manager.saveMessagingPlatform('feishu', { appId: 'cli-app', appSecret: 'app-secret', domain: 'lark' }, 'teamA')
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'))
+    expect(written.channels.feishu.accounts.teamA).toMatchObject({
+      enabled: true,
+      appId: 'cli-app',
+      appSecret: 'app-secret',
+      domain: 'lark',
+      connectionMode: 'websocket',
+    })
   })
 
-  it('removeChannel() deletes channel from config', async () => {
-    await manager.upsertChannel('telegram', { enabled: true })
-    await manager.removeChannel('telegram')
-    const channels = await manager.listChannels()
-    expect(channels['telegram']).toBeUndefined()
+  it('saveAgentBinding and listAllBindings operate on bindings array', async () => {
+    await manager.saveAgentBinding('helper', 'telegram', null, { peer: { kind: 'group', id: 'group-1' } })
+    await manager.saveAgentBinding('helper', 'telegram', null, { peer: { kind: 'group', id: 'group-1' } })
+
+    const result = await manager.listAllBindings()
+    expect(result.bindings).toHaveLength(1)
+    expect(result.bindings[0]).toMatchObject({
+      type: 'route',
+      agentId: 'helper',
+      match: { channel: 'telegram', peer: { kind: 'group', id: 'group-1' } },
+    })
   })
 
-  it('getStatus() calls openclaw channels status', async () => {
-    vi.mocked(cp.spawnSync).mockReturnValue({
-      status: 0,
-      stdout: Buffer.from('telegram: connected\n'),
-      stderr: Buffer.from(''),
-    } as any)
-    const status = await manager.getStatus()
-    expect(cp.spawnSync).toHaveBeenCalledWith('openclaw', ['channels', 'status'], expect.any(Object))
-    expect(status).toContain('telegram')
+  it('removeMessagingPlatform removes specific account bindings only', async () => {
+    const cfg = {
+      ...BASE_CONFIG,
+      channels: {
+        feishu: {
+          enabled: true,
+          accounts: {
+            teamA: { appId: 'a', appSecret: 'sa' },
+            teamB: { appId: 'b', appSecret: 'sb' },
+          },
+        },
+      },
+      bindings: [
+        { type: 'route', agentId: 'alpha', match: { channel: 'feishu', accountId: 'teamA' } },
+        { type: 'route', agentId: 'beta', match: { channel: 'feishu', accountId: 'teamB' } },
+      ],
+    }
+    await writeFile(configPath, JSON.stringify(cfg, null, 2))
+
+    await manager.removeMessagingPlatform('feishu', 'teamA')
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'))
+    expect(written.channels.feishu.accounts.teamA).toBeUndefined()
+    expect(written.channels.feishu.accounts.teamB).toBeDefined()
+    expect(written.bindings).toEqual([
+      { type: 'route', agentId: 'beta', match: { channel: 'feishu', accountId: 'teamB' } },
+    ])
   })
 })
