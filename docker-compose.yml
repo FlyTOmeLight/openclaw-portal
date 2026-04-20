@@ -1,0 +1,27 @@
+# OpenClaw Portal — compose stack
+#
+# Requires an OpenClaw gateway reachable on the host at 127.0.0.1:18789
+# (or adjust GATEWAY_HOST / GATEWAY_PORT below).
+#
+# Quickstart:
+#   docker compose up -d
+#   open http://localhost:18800
+
+services:
+  portal:
+    build: .
+    image: openclaw-portal:latest
+    container_name: openclaw-portal
+    restart: unless-stopped
+    network_mode: host        # needed so portal can reach gateway on loopback
+    environment:
+      - PORTAL_PORT=18800
+      - GATEWAY_HOST=127.0.0.1
+      - GATEWAY_PORT=18789
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18800/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -6,7 +6,11 @@
 
 仪表盘、Agent、渠道、技能、插件、对话、运维 —— 一个 Claude 风格 UI 全搞定。
 
+[![CI](https://github.com/FlyTOmeLight/openclaw-portal/actions/workflows/ci.yml/badge.svg)](https://github.com/FlyTOmeLight/openclaw-portal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/FlyTOmeLight/openclaw-portal?include_prereleases)](https://github.com/FlyTOmeLight/openclaw-portal/releases)
+[![Stars](https://img.shields.io/github/stars/FlyTOmeLight/openclaw-portal?style=social)](https://github.com/FlyTOmeLight/openclaw-portal/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/FlyTOmeLight/openclaw-portal)](https://github.com/FlyTOmeLight/openclaw-portal/commits/main)
 [![Vue 3](https://img.shields.io/badge/Vue-3.5-42b883.svg)](https://vuejs.org)
 [![Fastify](https://img.shields.io/badge/Fastify-5-black.svg)](https://fastify.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)](https://www.typescriptlang.org)
@@ -77,10 +81,20 @@ flowchart LR
 
 ### 前置要求
 
-- Node.js 22+
+- Node.js 22+（或 Docker 24+）
 - 一个运行在 `127.0.0.1:18789` 的 OpenClaw gateway（见 [openclaw.ai](https://openclaw.ai)）
 
-### 本地开发
+### 🐳 Docker（最简单）
+
+```bash
+git clone https://github.com/FlyTOmeLight/openclaw-portal.git
+cd openclaw-portal
+docker compose up -d
+```
+
+打开 <http://localhost:18800>。容器用 `network_mode: host`，可以直接访问 loopback 上的 gateway。
+
+### 🧑‍💻 本地开发（热加载）
 
 ```bash
 git clone https://github.com/FlyTOmeLight/openclaw-portal.git
@@ -89,9 +103,9 @@ make install   # 装前后端依赖
 make dev       # 前后端热加载并启动
 ```
 
-Vite dev server：<http://localhost:3000>；后端监听 `http://127.0.0.1:18800` 并反代到 gateway。
+打开 <http://localhost:3000>。后端监听 `127.0.0.1:18800` 并反代到 gateway。
 
-### 生产构建
+### 生产构建（不用 Docker）
 
 ```bash
 make build     # typecheck + 打包
@@ -131,11 +145,27 @@ portal/
 
 ## 参与贡献
 
-欢迎 issue 和 PR。提交前请确认：
+欢迎 issue、PR、设计反馈 —— 看 [CONTRIBUTING.md](./CONTRIBUTING.md)。想找低上下文入口可以看 [`good first issue`](https://github.com/FlyTOmeLight/openclaw-portal/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) 列表。请遵守 [Code of Conduct](./CODE_OF_CONDUCT.md)。
 
-1. 保留信任边界三层守卫（loopback 绑定 + onRequest 白名单 + proxy header）不被破坏
+代码评审强制要求：
+
+1. 保留信任边界三层守卫（loopback 绑定 + `onRequest` 白名单 + `X-Forwarded-User`）不被破坏
 2. gateway RPC 响应取 `payload`，不是 `result`
 3. agent 配置都放在 `agents.list[].*` 下
+
+## 路线图
+
+- [ ] i18n：中英文 UI 切换（目前仅中文）
+- [ ] 除 trusted-proxy 外支持 OAuth / SSO 登录
+- [ ] 加 Prometheus `/metrics`
+- [ ] 渠道事件实时推送通知
+- [ ] 所有页面深色模式完善
+
+有想法？开个 [Discussion](https://github.com/FlyTOmeLight/openclaw-portal/discussions/new?category=ideas)。
+
+## Star 走势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=FlyTOmeLight/openclaw-portal&type=Date)](https://star-history.com/#FlyTOmeLight/openclaw-portal&Date)
 
 ## 协议
 

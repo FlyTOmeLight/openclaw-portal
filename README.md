@@ -6,7 +6,11 @@
 
 Dashboard, agents, channels, skills, plugins, chat and ops in one Claude-inspired UI.
 
+[![CI](https://github.com/FlyTOmeLight/openclaw-portal/actions/workflows/ci.yml/badge.svg)](https://github.com/FlyTOmeLight/openclaw-portal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/FlyTOmeLight/openclaw-portal?include_prereleases)](https://github.com/FlyTOmeLight/openclaw-portal/releases)
+[![Stars](https://img.shields.io/github/stars/FlyTOmeLight/openclaw-portal?style=social)](https://github.com/FlyTOmeLight/openclaw-portal/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/FlyTOmeLight/openclaw-portal)](https://github.com/FlyTOmeLight/openclaw-portal/commits/main)
 [![Vue 3](https://img.shields.io/badge/Vue-3.5-42b883.svg)](https://vuejs.org)
 [![Fastify](https://img.shields.io/badge/Fastify-5-black.svg)](https://fastify.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)](https://www.typescriptlang.org)
@@ -77,10 +81,20 @@ flowchart LR
 
 ### Prerequisites
 
-- Node.js 22 or newer
+- Node.js 22 or newer (or Docker 24+)
 - A running OpenClaw gateway on `127.0.0.1:18789` (see [openclaw.ai](https://openclaw.ai))
 
-### Run locally
+### 🐳 Docker (easiest)
+
+```bash
+git clone https://github.com/FlyTOmeLight/openclaw-portal.git
+cd openclaw-portal
+docker compose up -d
+```
+
+Open <http://localhost:18800>. The container uses `network_mode: host` so it can reach the gateway on loopback.
+
+### 🧑‍💻 Local dev (hot reload)
 
 ```bash
 git clone https://github.com/FlyTOmeLight/openclaw-portal.git
@@ -89,9 +103,9 @@ make install   # install backend + frontend deps
 make dev       # start both in dev mode with hot reload
 ```
 
-Open <http://localhost:3000> for the Vite dev server. The backend listens on `http://127.0.0.1:18800` and proxies to the gateway.
+Open <http://localhost:3000>. Backend listens on `127.0.0.1:18800` and proxies to the gateway.
 
-### Production build
+### Production build (no Docker)
 
 ```bash
 make build     # typecheck + bundle
@@ -131,12 +145,27 @@ Backend tests: `cd backend && npm test`.
 
 ## Contributing
 
-Issues and PRs welcome. Before submitting:
+Issues, PRs, and design feedback are all welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Start with the [`good first issue`](https://github.com/FlyTOmeLight/openclaw-portal/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) list if you want a low-context entry point. Please follow the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
-1. Read [CLAUDE.md](./CLAUDE.md) (if present) for architecture conventions.
-2. Keep the trust boundary intact (loopback bind + onRequest allowlist + proxy header).
-3. Gateway RPC responses use `payload`, not `result`.
-4. Agent settings belong under `agents.list[].*`.
+Architecture rules (enforced in reviews):
+
+1. Keep the trust boundary intact (loopback bind + `onRequest` allowlist + `X-Forwarded-User`).
+2. Gateway RPC responses use the `payload` field, not `result`.
+3. Agent-scoped settings live under `agents.list[].*`, never via global overrides.
+
+## Roadmap
+
+- [ ] i18n: English / 简体中文 UI toggle (currently zh-CN only)
+- [ ] OAuth / SSO login in addition to trusted-proxy header
+- [ ] Prometheus `/metrics` endpoint
+- [ ] Real-time push notifications for channel events
+- [ ] Dark-mode polish pass across all views
+
+Have an idea? Open a [Discussion](https://github.com/FlyTOmeLight/openclaw-portal/discussions/new?category=ideas).
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=FlyTOmeLight/openclaw-portal&type=Date)](https://star-history.com/#FlyTOmeLight/openclaw-portal&Date)
 
 ## License
 
