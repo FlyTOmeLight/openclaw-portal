@@ -18,6 +18,8 @@ RUN npm run build
 # ---------- backend ----------
 FROM node:${NODE_VERSION} AS backend-build
 WORKDIR /app/backend
+# node-pty ships glibc prebuilds only; compile from source on alpine/musl.
+RUN apk add --no-cache python3 make g++
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci
 COPY backend/ ./
@@ -32,8 +34,15 @@ ENV NODE_ENV=production \
     GATEWAY_HOST=127.0.0.1 \
     GATEWAY_PORT=18789
 
+# libstdc++ stays at runtime for the compiled node-pty .node binary.
+# Build deps are virtual and removed after npm ci to keep the image small.
+RUN apk add --no-cache libstdc++ \
+ && apk add --no-cache --virtual .build-deps python3 make g++
+
 COPY backend/package.json backend/package-lock.json ./backend/
-RUN cd backend && npm ci --omit=dev && npm cache clean --force
+RUN cd backend && npm ci --omit=dev \
+ && apk del .build-deps \
+ && npm cache clean --force
 
 COPY --from=backend-build /app/backend/dist ./backend/dist
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
