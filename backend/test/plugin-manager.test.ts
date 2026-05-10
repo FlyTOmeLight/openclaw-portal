@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { join } from 'path'
+import { tmpdir } from 'os'
 import { PluginManager } from '../src/services/plugin-manager.js'
 
 vi.mock('child_process', () => ({
@@ -9,21 +12,33 @@ import * as cp from 'child_process'
 
 describe('PluginManager', () => {
   let manager: PluginManager
+  let tmpHome: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
-    manager = new PluginManager('/tmp/openclaw-home', 'openclaw')
+    tmpHome = await mkdtemp(join(tmpdir(), 'plugin-mgr-test-'))
+    manager = new PluginManager(tmpHome, 'openclaw')
   })
 
-  it('listInstalled() parses json output and filters bundled plugins', async () => {
-    vi.mocked(cp.spawnSync).mockReturnValue({
-      status: 0,
-      stdout: `[plugins] warning\n${JSON.stringify({ plugins: [
-        { name: '@openclaw/discord', version: '1.0.0', description: 'bundled', origin: 'bundled' },
-        { id: 'openclaw-lark', name: '@larksuite/openclaw-lark', version: '1.2.0', description: 'lark', origin: 'global', status: 'loaded', enabled: true, source: '/Users/test/.openclaw/extensions/openclaw-lark/index.js' },
-      ] })}`,
-      stderr: '',
-    } as any)
+  afterEach(async () => {
+    await rm(tmpHome, { recursive: true, force: true })
+  })
+
+  it('listInstalled() reads plugins from openclaw.json config', async () => {
+    await writeFile(join(tmpHome, 'openclaw.json'), JSON.stringify({
+      plugins: {
+        installs: {
+          'openclaw-lark': {
+            resolvedName: '@larksuite/openclaw-lark',
+            resolvedVersion: '1.2.0',
+            source: 'global',
+            installPath: join(tmpHome, 'extensions/openclaw-lark'),
+            resolvedSpec: '/Users/test/.openclaw/extensions/openclaw-lark/index.js',
+          },
+        },
+        entries: { 'openclaw-lark': { enabled: true } },
+      },
+    }))
 
     const plugins = await manager.listInstalled()
     expect(plugins).toEqual([
@@ -31,8 +46,8 @@ describe('PluginManager', () => {
         id: 'openclaw-lark',
         name: '@larksuite/openclaw-lark',
         version: '1.2.0',
-        description: 'lark',
-        status: 'loaded',
+        description: '',
+        status: 'active',
         origin: 'global',
         enabled: true,
         source: '/Users/test/.openclaw/extensions/openclaw-lark/index.js',
@@ -66,7 +81,7 @@ describe('PluginManager', () => {
     expect(result.command).toBe('openclaw plugins install @openclaw/test-plugin@2026.4.9')
     expect(cp.spawnSync).toHaveBeenCalledWith(
       'openclaw',
-      ['plugins', 'install', '@openclaw/test-plugin@2026.4.9'],
+      ['plugins', 'install', '@openclaw/test-plugin@2026.4.9', '--dangerously-force-unsafe-install'],
       expect.any(Object),
     )
   })
@@ -82,7 +97,7 @@ describe('PluginManager', () => {
     expect(result.command).toBe('openclaw plugins install left-pad@latest')
     expect(cp.spawnSync).toHaveBeenCalledWith(
       'openclaw',
-      ['plugins', 'install', 'left-pad@latest'],
+      ['plugins', 'install', 'left-pad@latest', '--dangerously-force-unsafe-install'],
       expect.any(Object),
     )
   })
@@ -105,7 +120,7 @@ describe('PluginManager', () => {
     expect(vi.mocked(cp.spawnSync)).toHaveBeenNthCalledWith(
       2,
       'openclaw',
-      ['plugins', 'install', '@dingtalk-real-ai/dingtalk-connector@0.8.14-beta.5'],
+      ['plugins', 'install', '@dingtalk-real-ai/dingtalk-connector@0.8.14-beta.5', '--dangerously-force-unsafe-install'],
       expect.any(Object),
     )
   })

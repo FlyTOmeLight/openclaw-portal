@@ -19,6 +19,8 @@ describe('SkillManager', () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'skill-manager-test-'))
     globalSkillsDir = join(tmpDir, 'skills')
     await mkdir(globalSkillsDir, { recursive: true })
+    await mkdir(join(tmpDir, 'agents', 'finance'), { recursive: true })
+    await mkdir(join(tmpDir, 'agents', 'medical'), { recursive: true })
     await mkdir(join(tmpDir, 'workspace-finance', 'skills'), { recursive: true })
     await mkdir(join(tmpDir, 'workspace-medical', 'skills'), { recursive: true })
     await makeSkill(globalSkillsDir, 'skill-creator', 'Meta skill for creating skills')
