@@ -1,79 +1,71 @@
 import type { FastifyInstance } from 'fastify'
-import { spawn } from 'child_process'
-import type { ChildProcess } from 'child_process'
+import * as pty from 'node-pty'
 import type { AuditLog } from '../services/audit-log.js'
+import { existsSync } from 'fs'
 
-// Text commands only — rejects anything that would need a real PTY (vim/top/less).
-// The portal's use case is ops: `openclaw ...`, `systemctl ...`, `tail -f`, `journalctl`, etc.
+// Full PTY-backed terminal. Spawns the user's $SHELL (fallback /bin/bash, /bin/sh)
+// with a real pseudo-terminal so interactive programs (vim, top, htop, less,
+// sudo password prompts, ssh, openclaw repls, etc.) work end-to-end.
+//
+// Trust boundary: only loopback origin + nginx-forwarded admin identity may
+// reach this endpoint. The portal is the *operator* shell, not a multi-tenant
+// surface. Audit log captures session start/end + first 200 chars of input
+// per command line submission.
 
-interface RunMessage {
-  type: 'run'
-  cmd: string
-  args?: string[]
-  cwd?: string
-}
-interface SignalMessage {
-  type: 'signal'
-  signal: 'SIGINT' | 'SIGTERM' | 'SIGKILL'
-}
-type IncomingMessage = RunMessage | SignalMessage
+interface ResizeMessage { type: 'resize'; cols: number; rows: number }
+interface InputMessage  { type: 'input';  data: string }
+interface SignalMessage { type: 'signal'; signal: 'SIGINT' | 'SIGTERM' | 'SIGKILL' }
+type IncomingMessage = ResizeMessage | InputMessage | SignalMessage
 
-// Commands allowed without an explicit path. Everything else must be an absolute path
-// or begin with "./" so users can't accidentally shadow PATH with a rogue binary.
-const ALLOWED_COMMANDS = new Set([
-  'openclaw',
-  'node',
-  'npm',
-  'systemctl',
-  'journalctl',
-  'nginx',
-  'ls',
-  'cat',
-  'tail',
-  'head',
-  'grep',
-  'find',
-  'ps',
-  'df',
-  'du',
-  'free',
-  'uptime',
-  'uname',
-  'hostname',
-  'whoami',
-  'env',
-  'pwd',
-  'echo',
-  'date',
-  'curl',
-  'wget',
-  'ip',
-  'ss',
-  'netstat',
-  'lsof',
-])
-
-function isAllowedCommand(cmd: string): boolean {
-  if (!cmd || typeof cmd !== 'string') return false
-  if (cmd.includes('\n') || cmd.includes('\r') || cmd.includes('\0')) return false
-  if (cmd.startsWith('/') || cmd.startsWith('./')) return true
-  return ALLOWED_COMMANDS.has(cmd)
-}
-
-function sanitizeArgs(args: unknown): string[] | null {
-  if (!Array.isArray(args)) return []
-  const clean: string[] = []
-  for (const a of args) {
-    if (typeof a !== 'string') return null
-    if (a.includes('\0')) return null
-    clean.push(a)
+function pickShell(): string {
+  const candidates = [
+    process.env.SHELL,
+    '/bin/bash',
+    '/usr/bin/bash',
+    '/bin/zsh',
+    '/bin/sh',
+  ].filter((c): c is string => typeof c === 'string' && !!c)
+  for (const c of candidates) {
+    try { if (existsSync(c)) return c } catch {}
   }
-  return clean
+  return '/bin/sh'
 }
 
 export async function terminalRoutes(app: FastifyInstance, audit?: AuditLog) {
   const handler = (socket: any) => {
-    let child: ChildProcess | null = null
+    const shell = pickShell()
+    const cwd = process.env.HOME || '/'
+    const startedAt = Date.now()
+
+    let term: pty.IPty | null = null
+    try {
+      term = pty.spawn(shell, [], {
+        name: 'xterm-256color',
+        cols: 100,
+        rows: 30,
+        cwd,
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+          LANG: process.env.LANG || 'en_US.UTF-8',
+        },
+      })
+    } catch (e: any) {
+      try {
+        socket.send(JSON.stringify({ type: 'error', message: `Failed to spawn shell: ${e.message}` }))
+      } catch {}
+      try { socket.close() } catch {}
+      return
+    }
+
+    audit?.record({
+      ts: startedAt,
+      actor: 'admin',
+      action: 'terminal.session.open',
+      target: `${shell} pid=${term.pid}`,
+      result: 'success',
+    })
 
     const send = (type: string, payload: Record<string, any> = {}) => {
       if (socket.readyState === socket.OPEN) {
@@ -82,9 +74,22 @@ export async function terminalRoutes(app: FastifyInstance, audit?: AuditLog) {
     }
 
     send('hello', {
-      allowed: [...ALLOWED_COMMANDS].sort(),
-      note: 'Non-interactive only. Use Ctrl+C to send SIGINT.',
+      shell,
+      pid: term.pid,
+      cols: 100,
+      rows: 30,
+      note: 'Full PTY shell. Interactive programs (vim/top/less) supported.',
     })
+
+    term.onData(data => send('data', { data }))
+    term.onExit(({ exitCode, signal }) => {
+      send('exit', { code: exitCode, signal: signal ?? null })
+      try { socket.close() } catch {}
+    })
+
+    // Buffer accumulating user keystrokes between newlines so audit captures
+    // command lines, not individual keystrokes.
+    let inputBuffer = ''
 
     socket.on('message', (data: Buffer) => {
       let msg: IncomingMessage
@@ -95,79 +100,69 @@ export async function terminalRoutes(app: FastifyInstance, audit?: AuditLog) {
         return
       }
 
+      if (msg.type === 'input') {
+        if (typeof msg.data !== 'string' || !term) return
+        try {
+          term.write(msg.data)
+        } catch (e: any) {
+          send('error', { message: `write failed: ${e.message}` })
+          return
+        }
+        inputBuffer += msg.data
+        // Audit on Enter — extract the typed line, strip trailing newline + control chars.
+        let nl = inputBuffer.indexOf('\r')
+        if (nl < 0) nl = inputBuffer.indexOf('\n')
+        if (nl >= 0) {
+          const line = inputBuffer.slice(0, nl).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim()
+          inputBuffer = inputBuffer.slice(nl + 1)
+          if (line) {
+            audit?.record({
+              ts: Date.now(),
+              actor: 'admin',
+              action: 'terminal.exec',
+              target: line.slice(0, 200),
+              result: 'success',
+            })
+          }
+        }
+        return
+      }
+
+      if (msg.type === 'resize') {
+        const cols = Math.max(2, Math.min(500, Math.floor(Number(msg.cols) || 80)))
+        const rows = Math.max(2, Math.min(200, Math.floor(Number(msg.rows) || 24)))
+        try { term?.resize(cols, rows) } catch {}
+        return
+      }
+
       if (msg.type === 'signal') {
-        if (!child || child.killed) return
-        try { child.kill(msg.signal) } catch {}
+        if (!term) return
+        try { term.kill(msg.signal) } catch {}
         return
       }
 
-      if (msg.type !== 'run') {
-        send('error', { message: `Unknown message type: ${(msg as any).type}` })
-        return
-      }
-
-      if (child && !child.killed && child.exitCode === null) {
-        send('error', { message: 'A command is already running' })
-        return
-      }
-
-      const cmd = msg.cmd
-      const args = sanitizeArgs(msg.args)
-      if (args === null) {
-        send('error', { message: 'Arguments must be strings without null bytes' })
-        return
-      }
-      if (!isAllowedCommand(cmd)) {
-        send('error', { message: `Command not allowed: ${cmd}` })
-        return
-      }
-
-      send('started', { cmd, args, ts: Date.now() })
-      audit?.record({
-        ts: Date.now(),
-        actor: 'admin',
-        action: 'terminal.exec',
-        target: [cmd, ...args].join(' ').slice(0, 200),
-        result: 'success',
-      })
-
-      try {
-        child = spawn(cmd, args, {
-          cwd: msg.cwd && typeof msg.cwd === 'string' ? msg.cwd : process.env.HOME || '/',
-          env: process.env,
-          shell: false,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-      } catch (e: any) {
-        send('error', { message: `Failed to spawn: ${e.message}` })
-        child = null
-        return
-      }
-
-      child.stdout?.on('data', (chunk: Buffer) => send('stdout', { data: chunk.toString('utf8') }))
-      child.stderr?.on('data', (chunk: Buffer) => send('stderr', { data: chunk.toString('utf8') }))
-      child.on('error', (err) => send('error', { message: err.message }))
-      child.on('close', (code, signal) => {
-        send('exit', { code, signal })
-        child = null
-      })
+      send('error', { message: `Unknown message type: ${(msg as any).type}` })
     })
 
     socket.on('close', () => {
-      if (child && !child.killed) {
-        try { child.kill('SIGTERM') } catch {}
+      if (term) {
+        try { term.kill('SIGHUP') } catch {}
+        const t = term
         setTimeout(() => {
-          if (child && !child.killed) {
-            try { child.kill('SIGKILL') } catch {}
-          }
+          try { t.kill('SIGKILL') } catch {}
         }, 2000).unref()
+        term = null
       }
+      audit?.record({
+        ts: Date.now(),
+        actor: 'admin',
+        action: 'terminal.session.close',
+        target: `${shell} duration=${Math.floor((Date.now() - startedAt) / 1000)}s`,
+        result: 'success',
+      })
     })
   }
 
-  // Register both the canonical path and the /portal-prefixed path so direct
-  // backend access and nginx-proxied access both work. HTTP routes can 307
-  // redirect, but WebSocket upgrades cannot follow redirects.
   app.get('/api/terminal/ws', { websocket: true }, handler)
   app.get('/portal/api/terminal/ws', { websocket: true }, handler)
 }

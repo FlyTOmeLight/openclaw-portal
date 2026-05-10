@@ -167,7 +167,7 @@ export const api = {
       return req<{ exists: boolean; values?: Record<string, any> }>('GET', `/channels/platform-config?${q.toString()}`)
     },
     saveMessagingPlatform: (platform: string, form: Record<string, any>, accountId?: string | null) =>
-      req<{ ok: boolean }>('POST', '/channels/platform-config', { platform, form, accountId })
+      req<{ ok: boolean; accountId: string | null }>('POST', '/channels/platform-config', { platform, form, accountId })
         .then(r => { bust('ch/platforms', 'ch/agent-bindings'); return r }),
     removeMessagingPlatform: (platform: string, accountId?: string | null) =>
       req<{ ok: boolean }>('DELETE', '/channels/platform-config', { platform, accountId })

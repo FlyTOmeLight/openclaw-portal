@@ -14,6 +14,16 @@ import { serializePath, atomicWriteFile } from './file-lock.js'
 
 const QQBOT_DEFAULT_ACCOUNT_ID = 'default'
 
+// Match the Lansenger plugin's own derivation:
+//   dist/index.js → `bot_${appId.split('-')[1]}` (see @lansenger/openclaw-channel-lansenger README)
+function deriveLansengerAccountId(appId: string | undefined): string {
+  const raw = String(appId ?? '').trim()
+  if (!raw) return `bot_${Math.floor(Math.random() * 10000)}`
+  const parts = raw.split('-')
+  const tail = parts[1] || parts[0]
+  return `bot_${tail}`
+}
+
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 function platformStorageKey(platform: string): string {
@@ -343,7 +353,8 @@ export class ChannelManager {
     return { exists: true, values: form }
   }
 
-  async saveMessagingPlatform(platform: string, form: Record<string, any>, accountId?: string | null): Promise<void> {
+  async saveMessagingPlatform(platform: string, form: Record<string, any>, accountId?: string | null): Promise<{ accountId: string | null }> {
+    let effectiveAccountId: string | null = typeof accountId === 'string' && accountId.trim() ? accountId.trim() : null
     await this.mutate(cfg => {
     cfg.channels = cfg.channels ?? {}
     const storageKey = platformStorageKey(platform)
@@ -412,16 +423,44 @@ export class ChannelManager {
       Object.assign(entry, form)
       if (normalizedAccountId) setAccountChannelEntry(entry)
       else setRootChannelEntry(entry)
+    } else if (platform === 'Lansenger') {
+      // Per @lansenger/openclaw-channel-lansenger schema: config must live under
+      //   channels.Lansenger.accounts.<accountId>.{ appId, appSecret, apiGatewayUrl, agentId? }
+      // If the caller didn't pick an accountId, derive it the same way the
+      // plugin's CLI does (bot_<appId-suffix>) so the runtime binding matches.
+      if (!form.appId || !form.appSecret || !form.apiGatewayUrl) {
+        throw new Error('Lansenger 需要 App ID、App Secret 和 API 网关地址')
+      }
+      const resolvedAccountId = normalizedAccountId || deriveLansengerAccountId(form.appId)
+      const account: Record<string, any> = {
+        appId: form.appId,
+        appSecret: form.appSecret,
+        apiGatewayUrl: form.apiGatewayUrl,
+      }
+      if (typeof form.agentId === 'string' && form.agentId.trim()) account.agentId = form.agentId.trim()
+      const current = cfg.channels?.Lansenger && typeof cfg.channels.Lansenger === 'object'
+        ? (cfg.channels.Lansenger as Record<string, any>)
+        : { enabled: true }
+      current.enabled = current.enabled !== false
+      if (!current.accounts || typeof current.accounts !== 'object') current.accounts = {}
+      current.accounts[resolvedAccountId] = account
+      cfg.channels.Lansenger = current as ChannelConfig
+      effectiveAccountId = resolvedAccountId
     } else {
       Object.assign(entry, form)
       setRootChannelEntry(entry)
     }
 
-    if (!['qqbot', 'feishu', 'dingtalk', 'dingtalk-connector'].includes(platform)) {
+    // telegram / discord / slack etc. don't invoke the helper setters above,
+    // so they still need this direct assignment. Platforms with per-account
+    // nesting (qqbot/feishu/dingtalk/Lansenger) already persisted themselves
+    // and would have their accounts map wiped if we hit this line.
+    if (!['qqbot', 'feishu', 'dingtalk', 'dingtalk-connector', 'Lansenger'].includes(platform)) {
       cfg.channels[storageKey] = entry
     }
     })
     this.triggerReload()
+    return { accountId: effectiveAccountId }
   }
 
   async removeMessagingPlatform(platform: string, accountId?: string | null): Promise<void> {

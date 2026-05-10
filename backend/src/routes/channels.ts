@@ -33,8 +33,8 @@ export async function channelsRoutes(
   app.post<{ Body: { platform: string; form: Record<string, any>; accountId?: string | null } }>('/api/channels/platform-config', async (req, reply) => {
     const { platform, form, accountId } = req.body
     if (!platform || !form) return reply.status(400).send({ error: 'platform and form required' })
-    await channelManager.saveMessagingPlatform(platform, form, accountId)
-    return { ok: true }
+    const result = await channelManager.saveMessagingPlatform(platform, form, accountId)
+    return { ok: true, accountId: result.accountId }
   })
 
   app.delete<{ Body: { platform: string; accountId?: string | null } }>('/api/channels/platform-config', async (req, reply) => {

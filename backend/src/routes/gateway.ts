@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ConfigManager } from '../services/config-manager.js'
 import type { GatewayConfig } from '../types/openclaw.js'
-import { runCli } from '../services/cli-runner.js'
+import { getGatewayRpc } from '../services/gateway-rpc.js'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
@@ -101,11 +101,6 @@ function parseDevicesPayload(raw: string): { pendingRequests: any[]; pairedDevic
   return { pendingRequests, pairedDevices }
 }
 
-async function gatewayAuthArgs(_configManager: ConfigManager, _gatewayPort?: number): Promise<string[]> {
-  // openclaw devices subcommands don't accept --port or --token flags
-  return []
-}
-
 async function readDevicesFromFiles(): Promise<{ pendingRequests: any[]; pairedDevices: any[] }> {
   const devicesDir = join(process.env.OPENCLAW_HOME ?? join(homedir(), '.openclaw'), 'devices')
   const pairedPath = join(devicesDir, 'paired.json')
@@ -125,9 +120,18 @@ async function readDevicesFromFiles(): Promise<{ pendingRequests: any[]; pairedD
 export async function gatewayRoutes(
   app: FastifyInstance,
   configManager: ConfigManager,
-  openclawBin: string,
+  _openclawBin: string,
   gatewayPort?: number,
+  openclawHome?: string,
+  portalPort?: number,
 ) {
+  const rpc = () => {
+    if (!gatewayPort || !openclawHome || !portalPort) {
+      throw new Error('gateway RPC unavailable (missing gatewayPort/openclawHome/portalPort)')
+    }
+    return getGatewayRpc(gatewayPort, openclawHome, portalPort)
+  }
+
   app.get('/api/gateway', async () => {
     const cfg = await configManager.read()
     return cfg.gateway ?? {}
@@ -167,15 +171,20 @@ export async function gatewayRoutes(
       if (req.body?.requestId && !isSafeId(req.body.requestId)) {
         return reply.status(400).send({ error: 'invalid requestId' })
       }
-      const authArgs = await gatewayAuthArgs(configManager, gatewayPort)
-      const args = ['devices', 'approve']
-      if (req.body?.requestId) args.push(req.body.requestId)
-      else args.push('--latest')
-      args.push('--json', ...authArgs)
-      const output = await runCli(openclawBin, args, { timeout: 15000 })
-      return { ok: true, result: (() => { try { return JSON.parse(output) } catch { return output.trim() } })() }
+      let requestId = req.body?.requestId
+      if (!requestId) {
+        const { pendingRequests } = await readDevicesFromFiles()
+        const latest = pendingRequests
+          .map(r => ({ id: r.requestId, ts: r.requestedAtMs ?? 0 }))
+          .filter(r => r.id)
+          .sort((a, b) => b.ts - a.ts)[0]
+        if (!latest) return reply.status(404).send({ error: '没有待审批的配对请求' })
+        requestId = latest.id
+      }
+      const result = await rpc().request('device.pair.approve', { requestId })
+      return { ok: true, result }
     } catch (err: any) {
-      return reply.status(500).send({ error: err.stderr || err.message || '批准设备失败' })
+      return reply.status(500).send({ error: err.message || '批准设备失败' })
     }
   })
 
@@ -184,11 +193,10 @@ export async function gatewayRoutes(
       if (!isSafeId(req.body?.requestId)) {
         return reply.status(400).send({ error: 'invalid requestId' })
       }
-      const authArgs = await gatewayAuthArgs(configManager, gatewayPort)
-      const output = await runCli(openclawBin, ['devices', 'reject', req.body.requestId, '--json', ...authArgs], { timeout: 15000 })
-      return { ok: true, result: (() => { try { return JSON.parse(output) } catch { return output.trim() } })() }
+      const result = await rpc().request('device.pair.reject', { requestId: req.body.requestId })
+      return { ok: true, result }
     } catch (err: any) {
-      return reply.status(500).send({ error: err.stderr || err.message || '拒绝设备失败' })
+      return reply.status(500).send({ error: err.message || '拒绝设备失败' })
     }
   })
 
@@ -197,11 +205,10 @@ export async function gatewayRoutes(
       if (!isSafeId(req.params.deviceId)) {
         return reply.status(400).send({ error: 'invalid deviceId' })
       }
-      const authArgs = await gatewayAuthArgs(configManager, gatewayPort)
-      const output = await runCli(openclawBin, ['devices', 'remove', req.params.deviceId, '--json', ...authArgs], { timeout: 15000 })
-      return { ok: true, result: (() => { try { return JSON.parse(output) } catch { return output.trim() } })() }
+      const result = await rpc().request('device.pair.remove', { deviceId: req.params.deviceId })
+      return { ok: true, result }
     } catch (err: any) {
-      return reply.status(500).send({ error: err.stderr || err.message || '移除设备失败' })
+      return reply.status(500).send({ error: err.message || '移除设备失败' })
     }
   })
 }
