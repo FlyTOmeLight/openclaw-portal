@@ -67,8 +67,6 @@ flowchart LR
 
 ## 截图
 
-> 下面几张图占位用，换成你自己的即可，路径 `docs/screenshots/*.png`。
-
 | 仪表盘 | 渠道 | 对话 |
 |:--:|:--:|:--:|
 | ![Dashboard](./docs/screenshots/dashboard.png) | ![Channels](./docs/screenshots/channels.png) | ![Chat](./docs/screenshots/chat.png) |
@@ -103,7 +101,7 @@ make install   # 装前后端依赖
 make dev       # 前后端热加载并启动
 ```
 
-打开 <http://localhost:3000>。后端监听 `127.0.0.1:18800` 并反代到 gateway。
+打开 <http://localhost:5173/portal/>。Vite 在 `:5173` 上以 `/portal/` 为基路径提供前端，并把 API 请求反代到 `127.0.0.1:18800` 的后端。
 
 ### 生产构建（不用 Docker）
 
