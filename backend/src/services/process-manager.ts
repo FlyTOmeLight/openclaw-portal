@@ -1,4 +1,4 @@
-import { spawn, execSync, execFileSync } from 'child_process'
+import { spawn, execFileSync } from 'child_process'
 import { createConnection } from 'net'
 import { mkdirSync, openSync, constants } from 'fs'
 import { homedir } from 'os'
@@ -106,7 +106,29 @@ export class ProcessManager {
   }
 
   private findGatewayPid(): number | undefined {
-    for (const pattern of ['openclaw-gateway', 'openclaw gateway run']) {
+    // 1) Port-anchored lookup — most reliable, independent of cmdline shape.
+    const port = this.opts.gatewayPort
+    try {
+      const out = execFileSync('lsof', ['-tiTCP:' + port, '-sTCP:LISTEN'], {
+        encoding: 'utf-8',
+        timeout: 3000,
+      }).trim()
+      const pid = parseInt(out.split('\n')[0], 10)
+      if (!isNaN(pid)) return pid
+    } catch { /* lsof missing or no match */ }
+    try {
+      const out = execFileSync('ss', ['-ltnpH', `sport = :${port}`], {
+        encoding: 'utf-8',
+        timeout: 3000,
+      })
+      const m = out.match(/pid=(\d+)/)
+      if (m) {
+        const pid = parseInt(m[1], 10)
+        if (!isNaN(pid)) return pid
+      }
+    } catch { /* ss missing or no listener */ }
+    // 2) Cmdline fallback — covers the legacy nohup launcher.
+    for (const pattern of ['openclaw-gateway', 'gateway run --port', 'openclaw gateway run']) {
       try {
         const out = execFileSync('pgrep', ['-f', pattern], {
           encoding: 'utf-8',
@@ -114,11 +136,23 @@ export class ProcessManager {
         }).trim()
         const pid = parseInt(out.split('\n')[0], 10)
         if (!isNaN(pid)) return pid
-      } catch {
-        // pgrep exits non-zero when nothing found — try next pattern
-      }
+      } catch { /* pgrep no match */ }
     }
     return undefined
+  }
+
+  private signalPid(pid: number, signal: 'SIGTERM' | 'SIGKILL'): boolean {
+    try {
+      process.kill(pid, signal)
+      return true
+    } catch (err: any) {
+      if (err?.code === 'ESRCH') return true
+      if (err?.code === 'EPERM') {
+        // Different uid — try sudo -n only if explicitly opted in.
+        return false
+      }
+      return false
+    }
   }
 
   private probeGatewayPort(): Promise<boolean> {
@@ -142,25 +176,28 @@ export class ProcessManager {
     const status = await this.getStatus()
     if (status.state === 'running') throw new Error('OpenClaw is already running')
 
-    // Try CLI start (daemon-aware)
+    const errors: string[] = []
+
+    // Try CLI start (daemon-aware) — best-effort, may not be wired on Kylin.
     try {
       const output = await runCli(this.opts.openclawBin, ['gateway', 'start'], { timeout: 10000 })
-
       if (!this.serviceManagerUnavailable(output)) {
         const started = await this.waitForState('running')
-        if (started.state === 'running') return
+        if (started.state === 'running') { this.invalidateStatusCache(); return }
       }
-    } catch {
-      // CLI 'start' not available — fall back to detached spawn
+    } catch (err: any) {
+      const msg = (err?.stderr || err?.message || '').toString().trim()
+      if (msg) errors.push(`cli start: ${msg.slice(0, 300)}`)
     }
 
+    // Fallback: detached spawn.
     const logsDir = join(this.openclawHome, 'logs')
     mkdirSync(logsDir, { recursive: true })
     const logFd = openSync(this.logFile, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND)
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
         this.opts.openclawBin,
-        ['gateway', 'run', '--port', String(this.opts.gatewayPort)],
+        ['gateway', 'run', '--port', String(this.opts.gatewayPort), '--force'],
         { detached: true, stdio: ['ignore', logFd, logFd] }
       )
       child.once('error', reject)
@@ -172,7 +209,8 @@ export class ProcessManager {
 
     const started = await this.waitForState('running')
     if (started.state !== 'running') {
-      throw new Error(`OpenClaw failed to start. Check logs: ${this.logFile}`)
+      const detail = errors.length ? ` [${errors.join(' | ')}]` : ''
+      throw new Error(`OpenClaw failed to start.${detail} Check logs: ${this.logFile}`)
     }
     this.invalidateStatusCache()
   }
@@ -181,46 +219,56 @@ export class ProcessManager {
     let status = await this.getStatus()
     if (status.state !== 'running') throw new Error('OpenClaw is not running')
 
-    // Try CLI stop (graceful, daemon-aware)
+    const errors: string[] = []
+
+    // Try CLI stop (graceful, daemon-aware).
     try {
       await runCli(this.opts.openclawBin, ['gateway', 'stop'], { timeout: 10000 })
-      const stopped = await this.waitForState('stopped')
-      if (stopped.state === 'stopped') return
-      status = stopped
-    } catch {
-      // CLI stop not available — fall back to kill
+      const stopped = await this.waitForState('stopped', 5000)
+      if (stopped.state === 'stopped') { this.invalidateStatusCache(); return }
+    } catch (err: any) {
+      const msg = (err?.stderr || err?.message || '').toString().trim()
+      if (msg) errors.push(`cli stop: ${msg.slice(0, 300)}`)
     }
 
-    // direct-run 模式下 CLI 可能只报告 running 而不给 pid，这里强制刷新一次兜底扫描。
-    if (!status.pid) {
-      status = await this.getStatus(true)
-      if (status.state === 'stopped') return
-    }
+    // Force a fresh PID lookup — port-anchored fallback handles the case where
+    // pgrep cmdline patterns missed the process.
+    if (!status.pid) status = await this.getStatus(true)
 
     if (status.pid) {
-      execSync(`kill ${status.pid}`)
-      const stopped = await this.waitForState('stopped')
-      if (stopped.state === 'stopped') return
+      const termed = this.signalPid(status.pid, 'SIGTERM')
+      if (!termed) errors.push(`SIGTERM ${status.pid}: EPERM (uid mismatch?)`)
+      const stopped = await this.waitForState('stopped', 5000)
+      if (stopped.state === 'stopped') { this.invalidateStatusCache(); return }
+
+      // Escalate to SIGKILL.
+      const killed = this.signalPid(status.pid, 'SIGKILL')
+      if (!killed) errors.push(`SIGKILL ${status.pid}: EPERM`)
+      const dead = await this.waitForState('stopped', 3000)
+      if (dead.state === 'stopped') { this.invalidateStatusCache(); return }
+    } else {
+      errors.push('no pid found via lsof/ss/pgrep — gateway likely owned by another uid')
     }
 
     this.invalidateStatusCache()
-    throw new Error(`OpenClaw failed to stop. Check logs: ${this.logFile}`)
+    const detail = errors.length ? ` [${errors.join(' | ')}]` : ''
+    throw new Error(`OpenClaw failed to stop.${detail} Check logs: ${this.logFile}`)
   }
 
   async restart(): Promise<void> {
     this._restarting = true
     this.invalidateStatusCache()
     try {
-      // Try CLI restart first
+      // Try CLI restart first — gateway uses SIGUSR1 sentinel internally.
       try {
         await runCli(this.opts.openclawBin, ['gateway', 'restart'], { timeout: 15000 })
         const restarted = await this.waitForState('running')
         if (restarted.state === 'running') return
       } catch (err: any) {
-        console.warn('[process-manager] CLI restart failed, falling back to stop+start:', err?.message ?? err)
+        console.warn('[process-manager] CLI restart failed, falling back to stop+start:', err?.stderr ?? err?.message ?? err)
       }
 
-      // Manual stop + start
+      // Manual stop + start.
       const s = await this.getStatus(true)
       if (s.state === 'running' || s.state === 'restarting') {
         await this.stop()

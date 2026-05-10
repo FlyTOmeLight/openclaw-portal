@@ -97,6 +97,48 @@ describe('ChannelManager', () => {
     })
   })
 
+  it('saveMessagingPlatform writes Lansenger to accounts and derives accountId from appId when blank', async () => {
+    const result = await manager.saveMessagingPlatform(
+      'Lansenger',
+      { appId: '123123-456789', appSecret: 'sec', apiGatewayUrl: 'https://gw.example.com' },
+      null,
+    )
+
+    expect(result.accountId).toBe('bot_456789')
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'))
+    expect(written.channels.Lansenger).toMatchObject({ enabled: true })
+    expect(written.channels.Lansenger.accounts.bot_456789).toEqual({
+      appId: '123123-456789',
+      appSecret: 'sec',
+      apiGatewayUrl: 'https://gw.example.com',
+    })
+  })
+
+  it('saveMessagingPlatform respects explicit Lansenger accountId and keeps agentId when provided', async () => {
+    const result = await manager.saveMessagingPlatform(
+      'Lansenger',
+      { appId: 'a-b', appSecret: 'sec', apiGatewayUrl: 'https://gw', agentId: 'coder' },
+      'bot_custom',
+    )
+
+    expect(result.accountId).toBe('bot_custom')
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'))
+    expect(written.channels.Lansenger.accounts.bot_custom).toEqual({
+      appId: 'a-b',
+      appSecret: 'sec',
+      apiGatewayUrl: 'https://gw',
+      agentId: 'coder',
+    })
+  })
+
+  it('saveMessagingPlatform rejects Lansenger without required fields', async () => {
+    await expect(
+      manager.saveMessagingPlatform('Lansenger', { appId: '1-2' }, null),
+    ).rejects.toThrow(/App Secret|API 网关/)
+  })
+
   it('saveAgentBinding and listAllBindings operate on bindings array', async () => {
     await manager.saveAgentBinding('helper', 'telegram', null, { peer: { kind: 'group', id: 'group-1' } })
     await manager.saveAgentBinding('helper', 'telegram', null, { peer: { kind: 'group', id: 'group-1' } })

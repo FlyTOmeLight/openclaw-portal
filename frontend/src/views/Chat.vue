@@ -168,11 +168,18 @@
 
       <!-- Pending files -->
       <div v-if="pendingFiles.length" class="pending-files">
-        <div v-for="(f, i) in pendingFiles" :key="`${currentAgent.id}:${f.filename}:${i}`" class="pf-item">
-          <img v-if="f.type === 'image'" :src="f.dataUrl" class="pf-thumb" />
+        <div
+          v-for="(f, i) in pendingFiles"
+          :key="`${currentAgent.id}:${f.filename}:${i}`"
+          :class="['pf-item', f.uploading && 'pf-uploading', f.error && 'pf-error']"
+        >
+          <img v-if="f.type === 'image' && f.dataUrl" :src="f.dataUrl" class="pf-thumb" />
           <div v-else class="pf-file">
-            <span class="file-icon">📄</span>
+            <span class="file-icon">{{ f.error ? '⚠️' : (f.uploading ? '⏳' : '📄') }}</span>
             <span class="pf-name">{{ f.filename }}</span>
+            <span v-if="f.uploading" class="pf-status">上传中…</span>
+            <span v-else-if="f.error" class="pf-status pf-status-error">{{ f.error }}</span>
+            <span v-else-if="f.size" class="pf-status">{{ formatBytes(f.size) }}</span>
           </div>
           <button @click="removePending(i)" class="pf-remove" :disabled="streaming">✕</button>
         </div>
@@ -254,11 +261,15 @@ type AgentPhase = 'sending' | 'thinking' | 'replying' | 'done' | 'aborted'
 type RoleFilterValue = 'all' | 'user' | 'assistant'
 
 interface Attachment {
-  type: 'image' | 'text'
+  type: 'image' | 'text' | 'file'
   filename: string
   mimeType: string
+  size?: number
   dataUrl?: string
   content?: string
+  path?: string
+  uploading?: boolean
+  error?: string
 }
 
 interface AgentOption {
@@ -654,19 +665,51 @@ async function loadAgents() {
 // ─── File handling ────────────────────────────────────────────────────────────
 
 async function onFilePick(e: Event) {
-  const files = (e.target as HTMLInputElement).files
-  if (!files) return
-  for (const file of Array.from(files)) {
-    const result = await api.chat.uploadFile(file)
-    currentState.value.pendingFiles.push(result)
+  const input = e.target as HTMLInputElement
+  if (!input.files) return
+  // Snapshot files before clearing the input — FileList is live and resetting
+  // input.value drops references, leaving Array.from() empty if read afterward.
+  const fileArr = Array.from(input.files)
+  if (!fileArr.length) return
+
+  // Push placeholders, then re-read them back as reactive proxies — mutating
+  // the raw objects bypasses Vue's reactivity and the UI will not refresh.
+  const startIdx = currentState.value.pendingFiles.length
+  for (const file of fileArr) {
+    currentState.value.pendingFiles.push({
+      type: 'file',
+      filename: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      uploading: true,
+    })
   }
-  ;(e.target as HTMLInputElement).value = ''
+  const reactivePhs = fileArr.map((_, i) => currentState.value.pendingFiles[startIdx + i])
+
+  input.value = ''
   await nextTick()
   autoResizeTextarea()
+
+  await Promise.all(fileArr.map(async (file, idx) => {
+    const ph = reactivePhs[idx]
+    try {
+      const result = await api.chat.uploadFile(file) as Attachment
+      Object.assign(ph, result, { uploading: false })
+    } catch (err: any) {
+      ph.uploading = false
+      ph.error = err?.message || '上传失败'
+    }
+  }))
 }
 
 function removePending(i: number) {
   currentState.value.pendingFiles.splice(i, 1)
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 // ─── Message copy ─────────────────────────────────────────────────────────────
@@ -1020,6 +1063,9 @@ async function send() {
   const attachments = [...state.pendingFiles]
   if (!text && attachments.length === 0) return
   if (streaming.value) return
+  if (attachments.some(a => a.uploading)) return  // wait for in-flight uploads
+  const failed = attachments.filter(a => a.error)
+  if (failed.length) return  // user must remove failed entries first
 
   slashMenuVisible.value = false
 
@@ -1040,11 +1086,13 @@ async function send() {
   const assistantMsg = state.messages[state.messages.length - 1] as Message
   streaming.value = true
 
-  // Build message text (embed text attachments inline; note image attachments textually)
+  // Build message text. Text attachments inline as fenced blocks; binary
+  // attachments embed a path so the agent can read them via tools.
   const textParts: string[] = []
   for (const a of attachments) {
     if (a.type === 'text' && a.content) textParts.push(`\`\`\`${a.filename}\n${a.content}\n\`\`\``)
     else if (a.type === 'image') textParts.push(`[图片附件: ${a.filename}]`)
+    else if (a.type === 'file' && a.path) textParts.push(`[文件附件: ${a.filename}] 路径: ${a.path}`)
   }
   if (text) textParts.push(text)
   const messageText = textParts.join('\n')
@@ -1495,6 +1543,17 @@ watch(filteredSlashCmds, (cmds) => {
 .pf-name { font-size: var(--text-xs); color: var(--text-secondary); }
 .pf-remove { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; background: rgba(15,23,42,.72); color: white; border: none; border-radius: 999px; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; }
 .pf-remove:disabled { cursor: not-allowed; opacity: .5; }
+.pf-status { font-size: var(--text-xs); color: var(--text-muted); margin-left: 4px; }
+.pf-status-error { color: var(--error-text); }
+.pf-item.pf-uploading { opacity: .75; }
+.pf-item.pf-uploading::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: pf-progress 1.2s linear infinite;
+}
+.pf-item.pf-error { border-color: var(--error-border, #fca5a5); background: var(--error-tint, #fee2e2); }
+@keyframes pf-progress { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
 /* Slash command menu */
 .slash-menu {

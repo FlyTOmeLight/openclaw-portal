@@ -1,6 +1,6 @@
 {
   "name": "openclaw-portal-frontend",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Vue 3 + Vite frontend for the OpenClaw self-service management portal.",
   "license": "MIT",
   "author": "FlyTOmeLight",

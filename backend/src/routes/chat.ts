@@ -3,7 +3,8 @@ import { WebSocket } from 'ws'
 import { getOrCreateDeviceKey, buildConnectFrame, buildGatewayAuthHeaders, getGatewayAuthToken, getGatewayRpc, sanitizeUser } from '../services/gateway-rpc.js'
 import { gatewayHttpBase, gatewayWsBase, portalHttpBase } from '../config.js'
 import type { UsageTracker } from '../services/usage-tracker.js'
-import { join } from 'path'
+import { join, extname } from 'path'
+import { mkdir, writeFile } from 'fs/promises'
 
 // Extract usage from an arbitrary payload shape. Gateway, OpenAI, Anthropic
 // and our own events all differ — be forgiving about field names.
@@ -393,19 +394,53 @@ export async function chatRoutes(
   })
 
   // ─── File upload ──────────────────────────────────────────────────────────────
+  // Allow inlining as text only for true text content; everything else (PDF,
+  // docx, xlsx, archives, …) is persisted to the agent workspace and the
+  // chat carries a path reference instead of raw bytes — embedding raw bytes
+  // produces "message must not contain null bytes" at the gateway.
+  const TEXT_EXT = new Set([
+    '.txt', '.md', '.markdown', '.json', '.yaml', '.yml', '.toml', '.csv', '.tsv',
+    '.log', '.html', '.htm', '.xml', '.svg', '.css', '.js', '.mjs', '.cjs', '.ts',
+    '.tsx', '.jsx', '.vue', '.py', '.rb', '.go', '.rs', '.java', '.kt', '.swift',
+    '.c', '.h', '.cpp', '.hpp', '.sh', '.bash', '.zsh', '.fish', '.sql', '.ini',
+    '.conf', '.env',
+  ])
+  const isTextLike = (mime: string, name: string): boolean => {
+    if (mime.startsWith('text/')) return true
+    if (mime === 'application/json' || mime === 'application/xml') return true
+    return TEXT_EXT.has(extname(name).toLowerCase())
+  }
+  const sanitizeFilename = (name: string): string => {
+    const base = name.replace(/[\\/]/g, '_').replace(/^\.+/, '')
+    return base.slice(0, 200) || 'upload.bin'
+  }
+
   app.post('/api/chat/file', async (req, reply) => {
-    const data = await req.file()
+    const data = await req.file({ limits: { fileSize: 50 * 1024 * 1024 } })
     if (!data) return reply.status(400).send({ error: 'No file' })
 
-    const mimeType = data.mimetype
-    const filename = data.filename
+    const mimeType = data.mimetype || 'application/octet-stream'
+    const filename = data.filename || 'upload.bin'
     const chunks: Buffer[] = []
     for await (const chunk of data.file) chunks.push(chunk)
     const buffer = Buffer.concat(chunks)
 
     if (mimeType.startsWith('image/')) {
-      return { type: 'image', filename, mimeType, dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}` }
+      return { type: 'image', filename, mimeType, size: buffer.length, dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}` }
     }
-    return { type: 'text', filename, mimeType, content: buffer.slice(0, 100 * 1024).toString('utf-8') }
+
+    if (isTextLike(mimeType, filename)) {
+      // Reject inline content that still contains null bytes (defensive).
+      const content = buffer.slice(0, 100 * 1024).toString('utf-8').replace(/\u0000/g, '')
+      return { type: 'text', filename, mimeType, size: buffer.length, content }
+    }
+
+    // Binary: save to ~/.openclaw/workspace/uploads/<ts>-<filename>
+    const uploadsDir = join(openclawHome, 'workspace', 'uploads')
+    await mkdir(uploadsDir, { recursive: true })
+    const safeName = `${Date.now()}-${sanitizeFilename(filename)}`
+    const dest = join(uploadsDir, safeName)
+    await writeFile(dest, buffer)
+    return { type: 'file', filename, mimeType, size: buffer.length, path: dest }
   })
 }

@@ -355,11 +355,16 @@
             <select v-if="field.type === 'select'" v-model="configForm[field.key]" class="form-select">
               <option v-for="option in field.options || []" :key="`${field.key}-${option.value}`" :value="option.value">{{ option.label }}</option>
             </select>
+            <PasswordInput
+              v-else-if="field.type === 'password'"
+              v-model="configForm[field.key]"
+              :placeholder="field.placeholder || ''"
+            />
             <input
               v-else
               v-model="configForm[field.key]"
               class="form-input"
-              :type="field.type === 'password' ? 'password' : 'text'"
+              type="text"
               :placeholder="field.placeholder || ''"
             >
             <div v-if="field.hint" class="form-hint">{{ field.hint }}</div>
@@ -484,6 +489,7 @@ import { useRoute } from 'vue-router'
 import QRCode from 'qrcode'
 import { api } from '../api/client.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import PasswordInput from '../components/PasswordInput.vue'
 
 // strip ANSI escape codes from terminal output
 function stripAnsi(str: string): string {
@@ -645,8 +651,8 @@ const platformTemplates: PlatformTemplate[] = [
     desc: '通过蓝信企业即时通讯平台接入，支持多账号。',
     initial: '蓝',
     multiAccount: true,
-    accountIdPlaceholder: '留空为默认账号；修改会创建新账号',
-    accountIdHint: '每个账号对应一个独立机器人（如 bot_11100160）。不同账号可绑定不同 Agent。',
+    accountIdPlaceholder: '留空将自动派生为 bot_<AppID 后缀>',
+    accountIdHint: '每个账号对应一个独立机器人。留空时会按插件约定从 AppID 自动生成（例如 123123-456789 → bot_456789），也可手工指定。',
     pluginPkg: '@lansenger/openclaw-channel-lansenger@latest',
     fields: [
       { key: 'appId', label: 'App ID', required: true, placeholder: '10485760-XXXXXXX', hint: '蓝信开放平台应用的 App ID' },
@@ -1068,11 +1074,20 @@ async function saveConfigPlatform() {
     if (template.pluginPkg && pluginStatus.value[template.name]?.installed !== true) {
       await installPlugin(template.name)
     }
-    await api.channels.saveMessagingPlatform(template.name, { ...configForm }, template.multiAccount ? (configAccountId.value.trim() || null) : null)
+    const saveResult = await api.channels.saveMessagingPlatform(
+      template.name,
+      { ...configForm },
+      template.multiAccount ? (configAccountId.value.trim() || null) : null,
+    )
+    // The backend can derive an accountId (e.g. Lansenger → bot_<suffix>);
+    // reuse it for the binding so match.accountId lines up with the config.
+    const bindingAccountId = template.multiAccount
+      ? (saveResult.accountId || configAccountId.value.trim() || null)
+      : null
     await api.channels.saveAgentBinding(
       configAgentId.value || 'main',
       getChannelBindingKey(template.name),
-      template.multiAccount ? (configAccountId.value.trim() || null) : null,
+      bindingAccountId,
       {},
     )
     await refreshPage()
