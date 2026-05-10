@@ -67,8 +67,6 @@ flowchart LR
 
 ## Screenshots
 
-> Replace these with your own captures — paths are `docs/screenshots/*.png`.
-
 | Dashboard | Channels | Chat |
 |:--:|:--:|:--:|
 | ![Dashboard](./docs/screenshots/dashboard.png) | ![Channels](./docs/screenshots/channels.png) | ![Chat](./docs/screenshots/chat.png) |
@@ -103,7 +101,7 @@ make install   # install backend + frontend deps
 make dev       # start both in dev mode with hot reload
 ```
 
-Open <http://localhost:3000>. Backend listens on `127.0.0.1:18800` and proxies to the gateway.
+Open <http://localhost:5173/portal/>. Vite serves the frontend on `:5173` under the `/portal/` base path and proxies API calls to the backend on `127.0.0.1:18800`.
 
 ### Production build (no Docker)
 
