@@ -34,13 +34,13 @@ export interface SsoUser {
 
 const DEFAULTS: SsoConfig = {
   enabled: false,
-  baseUrl: '',
+  baseUrl: 'https://sso.example.com',
   loginPath: '/auth/sso/ssoLogin/',
-  tokenCheckUrl: '',
+  tokenCheckUrl: 'https://sso.example.com/auth/sso/tokenCheck',
   productCode: 'ceai-license',
   redirectBaseUrl: '',
   secretKey: '',
-  permissionCheckUrl: '',
+  permissionCheckUrl: 'https://sso.example.com/auth/apihandler/permissionCheck',
   permissionCheckEnabled: false,
   requiredPolicyUids: [],
   orgCheckEnabled: false,
