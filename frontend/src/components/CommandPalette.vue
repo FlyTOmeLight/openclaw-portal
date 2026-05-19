@@ -85,6 +85,7 @@ function setItemRef(el: HTMLElement | null, idx: number) {
 const COMMANDS: Command[] = [
   { id: 'nav.dashboard', group: '工作台', label: '仪表盘', path: '/', hint: '服务状态总览', keywords: ['首页', 'home', 'dashboard', '概览'] },
   { id: 'nav.chat',      group: '工作台', label: '聊天',   path: '/chat', hint: '与 Agent 对话', keywords: ['对话', 'chat', '发消息'] },
+  { id: 'nav.filebrowser', group: '工作台', label: '文件管理', path: '/files', hint: '浏览服务器文件', keywords: ['file', '文件浏览', 'browser', '下载', '上传'] },
   { id: 'nav.history',   group: '工作台', label: '对话历史', path: '/history', hint: '历史会话 · 实时活动', keywords: ['会话', '历史', 'history'] },
   { id: 'nav.sessions',  group: '工作台', label: '历史会话', path: '/history/sessions', keywords: ['session', '会话记录'] },
   { id: 'nav.activity',  group: '工作台', label: '实时活动', path: '/history/activity', keywords: ['activity', '工具调用', 'tool'] },
@@ -96,6 +97,7 @@ const COMMANDS: Command[] = [
   { id: 'nav.skills',    group: '配置', label: '技能',    path: '/skills', keywords: ['skill', '能力', '工具'] },
   { id: 'nav.plugins',   group: '配置', label: '插件',    path: '/plugins', keywords: ['plugin', 'npm', '扩展'] },
   { id: 'nav.memory',    group: '配置', label: '记忆',    path: '/memory', keywords: ['memory', 'CLAUDE.md', '全局指令', 'soul'] },
+  { id: 'nav.dreaming',  group: '配置', label: '梦境模式', path: '/dreaming', hint: '记忆固化 Dreaming', keywords: ['dreaming', '梦境', '记忆固化', 'dream', 'DREAMS.md', '长期记忆'] },
   { id: 'nav.cron',      group: '配置', label: '定时任务', path: '/cron', keywords: ['定时', '计划任务', 'schedule', 'cron'] },
   { id: 'nav.mcp',       group: '配置', label: 'MCP 服务', path: '/mcp', hint: 'Model Context Protocol', keywords: ['mcp', 'model context protocol', '外部能力', 'tool server', 'filesystem', 'github'] },
 
@@ -108,9 +110,7 @@ const COMMANDS: Command[] = [
   { id: 'nav.audit',     group: '观测 & 运维', label: '操作审计', path: '/insights/audit', keywords: ['audit', '操作记录', '留痕', '合规'] },
 
   { id: 'nav.gateway-config', group: '系统', label: '网关 & 配置', path: '/gateway-config', hint: '端口 · JSON', keywords: ['gateway', 'port', '端口', 'openclaw.json', 'config'] },
-  { id: 'nav.tools',     group: '系统', label: '系统工具', path: '/tools', hint: '终端 · 文件', keywords: ['tools', '工具箱'] },
-  { id: 'nav.terminal',  group: '系统', label: '命令终端', path: '/tools/terminal', keywords: ['terminal', 'shell', 'cli', 'bash', 'command'] },
-  { id: 'nav.filebrowser', group: '系统', label: '文件管理', path: '/tools/files', keywords: ['file', '文件浏览', 'browser'] },
+  { id: 'nav.terminal',  group: '系统', label: '命令终端', path: '/terminal', hint: 'PTY 终端', keywords: ['terminal', 'shell', 'cli', 'bash', 'command', '工具'] },
   { id: 'nav.settings',  group: '系统', label: '系统设置', path: '/settings', hint: '密码 · 代理 · 备份', keywords: ['密码', 'password', '修改密码', '代理', 'proxy', '备份', 'backup', 'npm', '环境变量'] },
 ]
 

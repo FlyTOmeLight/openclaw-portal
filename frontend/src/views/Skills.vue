@@ -12,11 +12,6 @@
 
     <div class="metric-grid skills-metric-grid">
       <div class="metric-card">
-        <div class="metric-label">远端技能</div>
-        <div class="metric-value">{{ store.registry.length }}</div>
-        <div class="metric-meta">当前源：{{ activeSourceName }}</div>
-      </div>
-      <div class="metric-card">
         <div class="metric-label">内置就绪</div>
         <div class="metric-value">{{ bundledReadyCount }}</div>
         <div class="metric-meta">共 {{ store.bundled.length }} 个内置技能，适合快速核验运行环境</div>
@@ -42,7 +37,7 @@
         </div>
         <div class="skills-shell-actions">
           <n-button v-if="activeTab === 'registry'" size="small" @click="openSources">仓库源</n-button>
-          <n-button v-if="activeTab === 'registry'" size="small" @click="store.loadRegistry(registrySearch, selectedSourceId)">↻ 刷新</n-button>
+          <n-button v-if="activeTab === 'registry'" size="small" @click="reloadRegistry">↻ 刷新</n-button>
           <n-button v-else-if="activeTab === 'bundled'" size="small" @click="store.loadBundled()">↻ 刷新</n-button>
         </div>
       </div>
@@ -62,33 +57,52 @@
       <!-- ─── 技能库 tab ────────────────────────────────────────────── -->
       <div v-if="activeTab === 'registry'" class="skills-pane">
         <div class="toolbar-panel">
-          <div class="toolbar">
-            <div class="search-wrap">
-              <span class="search-icon">🔍</span>
-              <input
-                v-model="registrySearch"
-                placeholder="搜索技能名称或描述…"
-                class="search-input"
-                @input="queueRegistrySearch"
-                @keyup.enter="triggerRegistrySearch"
-              />
-            </div>
-            <div class="filter-chips">
-              <button
-                v-for="cat in registryCategories"
-                :key="cat"
-                :class="['chip', { active: registryCat === cat }]"
-                @click="registryCat = registryCat === cat ? '' : cat"
-              >{{ cat }}</button>
-            </div>
-            <n-select
-              v-if="store.sources.length > 1"
-              v-model:value="selectedSourceId"
-              :options="store.sources.map(src => ({ label: src.name, value: src.id }))"
-              size="small"
-              style="min-width: 200px"
-              @update:value="switchSource"
+          <div class="search-wrap registry-search">
+            <span class="search-icon">🔍</span>
+            <input
+              v-model="registrySearch"
+              placeholder="搜索技能名称或描述…"
+              class="search-input"
+              @input="queueRegistrySearch"
+              @keyup.enter="triggerRegistrySearch"
             />
+          </div>
+
+          <div class="filter-row">
+            <div v-if="store.sources.length > 1" class="filter-group">
+              <span class="filter-label">来源</span>
+              <div class="filter-chips">
+                <button
+                  v-for="src in store.sources"
+                  :key="src.id"
+                  :class="['chip', { active: selectedSourceId === src.id }]"
+                  @click="switchSource(src.id)"
+                >{{ src.name }}</button>
+              </div>
+            </div>
+
+            <div v-if="isSafeSkillSelected" class="filter-group">
+              <span class="filter-label">分类</span>
+              <div class="filter-chips">
+                <button
+                  v-for="opt in SAFESKILL_CATEGORY_OPTIONS"
+                  :key="opt.value"
+                  :class="['chip', { active: safeskillCategory === opt.value }]"
+                  @click="selectSafeCategory(opt.value)"
+                >{{ opt.label }}</button>
+              </div>
+            </div>
+            <div v-else-if="isLocalSelected && registryCategories.length" class="filter-group">
+              <span class="filter-label">分类</span>
+              <div class="filter-chips">
+                <button
+                  v-for="cat in registryCategories"
+                  :key="cat"
+                  :class="['chip', { active: registryCat === cat }]"
+                  @click="registryCat = registryCat === cat ? '' : cat"
+                >{{ cat }}</button>
+              </div>
+            </div>
           </div>
 
           <div class="toolbar-summary">
@@ -132,7 +146,7 @@
           >
             <div class="skill-card-topline">
               <span class="skill-surface-label">{{ skill.downloadUrl || skill.slug ? '远端收录' : '本地镜像' }}</span>
-              <span v-if="installedNames.has(skill.name)" class="installed-tag">已有安装</span>
+              <span v-if="isInstalled(skill)" class="installed-tag">✓ 已安装</span>
             </div>
 
             <div class="skill-card-header">
@@ -140,15 +154,32 @@
               <div class="skill-meta">
                 <div class="skill-name">{{ skill.name }}</div>
                 <div class="skill-badges">
-                  <span class="skill-cat-badge">{{ skillCategory(skill.name) }}</span>
+                  <span class="skill-cat-badge">{{ skillCategoryLabel(skill) }}</span>
+                  <span v-if="skill.trustScore != null" class="skill-trust-badge">🛡 信任 {{ skill.trustScore }}</span>
+                  <span v-if="skill.installs != null" class="skill-installs">↓ {{ formatInstalls(skill.installs) }}</span>
                   <span v-if="skill.source" class="source-badge">{{ skill.source }}</span>
                 </div>
               </div>
             </div>
 
             <p class="skill-desc">{{ skill.description || '暂无描述' }}</p>
-            <div class="skill-footnote">
-              {{ skill.downloadUrl || skill.slug ? '可安装到全局技能库或指定 Agent，适合逐步扩展能力。' : '从当前镜像源直接部署到目标 Agent，适合团队内统一下发。' }}
+
+            <div v-if="skill.author || skill.version || skill.updatedAt" class="skill-extra-meta">
+              <span v-if="skill.author" class="sem-item">👤 {{ skill.author }}</span>
+              <span v-if="skill.version" class="sem-item">⌗ v{{ skill.version }}</span>
+              <span v-if="skill.updatedAt" class="sem-item">🕑 {{ formatRelTime(skill.updatedAt) }}</span>
+            </div>
+            <div v-if="skill.keywords?.length" class="skill-keywords">
+              <span v-for="kw in skill.keywords" :key="kw" class="kw-tag">{{ kw }}</span>
+            </div>
+
+            <div v-if="isInstalled(skill)" class="installed-scopes">
+              <span class="installed-scopes-label">已安装到</span>
+              <span
+                v-for="ag in installedAgentsList(skill)"
+                :key="ag"
+                class="installed-scope-chip"
+              >{{ ag }}</span>
             </div>
 
             <div class="skill-actions">
@@ -190,6 +221,15 @@
               </template>
             </div>
           </article>
+        </div>
+
+        <div
+          v-if="store.registryHasMore"
+          ref="loadMoreSentinel"
+          class="load-more-sentinel"
+        >
+          <span v-if="store.registryLoadingMore" class="load-more-spinner">加载更多技能…</span>
+          <span v-else class="load-more-hint">继续滚动加载更多</span>
         </div>
       </div>
 
@@ -344,6 +384,8 @@
                 v-for="skill in group.skills"
                 :key="skill.name"
                 :class="['skill-card', 'skill-card-installed', { 'skill-disabled': !skill.enabled }]"
+                title="点击查看技能文件"
+                @click="openSkillFiles(skill)"
               >
                 <div class="skill-card-topline">
                   <span class="skill-surface-label">{{ skill.agent ? 'Agent 技能' : '全局技能' }}</span>
@@ -358,6 +400,7 @@
                     <div class="skill-name">{{ skill.name }}</div>
                     <div class="skill-badges">
                       <span class="skill-cat-badge">{{ skillCategory(skill.name) }}</span>
+                      <span v-if="skill.installSource" class="skill-source-badge">来自 {{ skill.installSource }}</span>
                     </div>
                   </div>
                 </div>
@@ -367,10 +410,11 @@
                   {{ skill.agent ? '该技能仅在当前 Agent 工作区内生效，可按需单独开关。' : '全局技能对所有 Agent 可见，建议仅保留稳定共用能力。' }}
                 </div>
 
-                <div class="skill-actions">
+                <div class="skill-actions" @click.stop>
                   <n-button v-if="skill.enabled && skill.agent" size="small" @click="store.disable(skill.name, skill.agent)">禁用</n-button>
                   <n-button v-if="!skill.enabled && skill.agent" type="primary" size="small" @click="store.enable(skill.name, skill.agent)">启用</n-button>
                   <span v-if="!skill.agent" class="global-tag">全局</span>
+                  <n-button size="small" type="error" ghost @click="removeSkill(skill)">删除</n-button>
                 </div>
               </article>
             </div>
@@ -508,18 +552,23 @@
         </div>
       </div>
     </Teleport>
+
+    <SkillFilesModal v-model:show="filesModal.show" :skill="filesModal.skill" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { NButton, NInput, NSelect, NTag, NTabs, NTabPane } from 'naive-ui'
 import { useSkillsStore } from '../stores/skills.js'
 import type { RegistrySource } from '../stores/skills.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import { useConfirm } from '../composables/useConfirm.js'
+import SkillFilesModal from '../components/SkillFilesModal.vue'
 
 const store = useSkillsStore()
 const toast = useNaiveToast()
+const confirm = useConfirm()
 
 const activeTab = ref<'registry' | 'bundled' | 'installed'>('registry')
 
@@ -563,9 +612,36 @@ const currentTabDesc = computed(() => TAB_COPY[activeTab.value].desc)
 
 const registrySearch = ref('')
 const registryCat = ref('')
+const safeskillCategory = ref('all')
 const selectedSourceId = ref('')
 const deployTargets = reactive<Record<string, string>>({})
 const deploying = ref('')
+
+// SafeSkill 源的服务端分类(8 个固定枚举),区别于按 skill 名前缀推断的本地分类。
+const SAFESKILL_CATEGORY_OPTIONS = [
+  { label: '全部', value: 'all' },
+  { label: '开发', value: 'development' },
+  { label: '效率', value: 'productivity' },
+  { label: 'AI 工程', value: 'ai_engineering' },
+  { label: '创作', value: 'creation' },
+  { label: 'IT 运维', value: 'it_operations' },
+  { label: '营销', value: 'marketing' },
+  { label: '数据分析', value: 'analytics' },
+  { label: '协作', value: 'collaboration' },
+  { label: '安全合规', value: 'security_compliance' },
+]
+const SAFESKILL_CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  SAFESKILL_CATEGORY_OPTIONS.map(o => [o.value, o.label]),
+)
+
+const isSafeSkillSelected = computed(() =>
+  /safeskill\.cn/i.test(store.sources.find(src => src.id === selectedSourceId.value)?.url ?? '')
+)
+
+// 本地目录源才有按名字前缀推断的分类;ClawHub 等远端源无分类维度
+const isLocalSelected = computed(() =>
+  store.sources.find(src => src.id === selectedSourceId.value)?.type === 'local'
+)
 
 const sourceNames = computed(() => {
   const names = new Set<string>()
@@ -592,27 +668,81 @@ const filteredRegistry = computed(() => {
   return list
 })
 
+function reloadRegistry() {
+  const category = isSafeSkillSelected.value && safeskillCategory.value !== 'all'
+    ? safeskillCategory.value
+    : ''
+  void store.loadRegistry(registrySearch.value.trim(), selectedSourceId.value, category)
+}
+
+function selectSafeCategory(value: string) {
+  safeskillCategory.value = value
+  reloadRegistry()
+}
+
 let registrySearchTimer: ReturnType<typeof setTimeout> | null = null
 function queueRegistrySearch() {
   if (registrySearchTimer) clearTimeout(registrySearchTimer)
-  registrySearchTimer = setTimeout(() => {
-    void store.loadRegistry(registrySearch.value.trim(), selectedSourceId.value)
-  }, 250)
+  registrySearchTimer = setTimeout(reloadRegistry, 250)
 }
 
 function triggerRegistrySearch() {
   if (registrySearchTimer) clearTimeout(registrySearchTimer)
-  void store.loadRegistry(registrySearch.value.trim(), selectedSourceId.value)
+  reloadRegistry()
 }
 
 async function switchSource(sourceId: string) {
   selectedSourceId.value = sourceId
+  safeskillCategory.value = 'all'
   await store.setActiveSource(sourceId)
 }
 
+// ── 瀑布式加载:哨兵进入视口即拉下一页 ───────────────────────────────────────
+const loadMoreSentinel = ref<HTMLElement>()
+let registryIO: IntersectionObserver | null = null
+
+onMounted(() => {
+  registryIO = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting) void store.loadMoreRegistry()
+  }, { rootMargin: '300px' })
+})
+
+onUnmounted(() => registryIO?.disconnect())
+
+watch(loadMoreSentinel, (el, prev) => {
+  if (prev) registryIO?.unobserve(prev)
+  if (el) registryIO?.observe(el)
+})
+
 // skills with agent = null are global; include all for "已有安装" badge
 const installedNames = computed(() => new Set(store.skills.map((s: any) => s.name)))
-const registryInstalledCount = computed(() => filteredRegistry.value.filter((s: any) => installedNames.value.has(s.name)).length)
+
+// registry 卡片 name 可能是 displayName(如 Manus),但安装目录名是 slug 末段(manus-api);两者都比对
+function isInstalled(skill: any): boolean {
+  if (installedNames.value.has(skill.name)) return true
+  const tail = skill.slug ? String(skill.slug).split('/').pop() : ''
+  return !!tail && installedNames.value.has(tail)
+}
+
+function agentLabel(agentId: string | null): string {
+  if (!agentId) return '全局'
+  const a = store.agents.find((x: any) => x.id === agentId)
+  return a?.identityName || agentId
+}
+
+// 该 registry 技能已安装到哪些 Agent
+function installedAgentsList(skill: any): string[] {
+  const tail = skill.slug ? String(skill.slug).split('/').pop() : ''
+  const agents = new Set<string>()
+  for (const s of store.skills) {
+    if (s.name === skill.name || (tail && s.name === tail)) {
+      agents.add(agentLabel(s.agent))
+    }
+  }
+  return [...agents]
+}
+
+const registryInstalledCount = computed(() => filteredRegistry.value.filter((s: any) => isInstalled(s)).length)
 const installedEnabledCount = computed(() => store.skills.filter((s: any) => s.enabled).length)
 const installedGlobalCount = computed(() => store.skills.filter((s: any) => !s.agent).length)
 
@@ -637,9 +767,7 @@ async function installRemoteSkill(skill: any) {
   deploying.value = skill.name
   try {
     const agent = target === '__registry__' ? null : target
-    if (skill.slug && skill.sourceType === 'clawhub') {
-      await store.installRegistry(skill.slug, skill.sourceUrl, skill.sourceType, agent)
-    } else if (skill.slug && skill.sourceType === 'skillhub') {
+    if (skill.slug && skill.sourceType && skill.sourceType !== 'json') {
       await store.installRegistry(skill.slug, skill.sourceUrl, skill.sourceType, agent)
     } else {
       await store.installRemote(skill.downloadUrl, agent)
@@ -734,6 +862,27 @@ const installedGroups = computed(() => {
 
 function groupEnabledCount(skills: any[]): number {
   return skills.filter(skill => skill.enabled).length
+}
+
+const filesModal = reactive<{ show: boolean; skill: any }>({ show: false, skill: null })
+
+function openSkillFiles(skill: any) {
+  if (!skill?.relPath && !skill?.path) return
+  filesModal.skill = skill
+  filesModal.show = true
+}
+
+async function removeSkill(skill: any) {
+  if (!await confirm({ title: '删除技能', message: `确定删除技能「${skill.name}」?该操作会移除技能文件，不可撤销。`, confirmText: '删除', danger: true })) return
+  deploying.value = skill.name
+  try {
+    await store.deleteSkill(skill.name, skill.agent ?? null)
+    toast.success(`${skill.name} 已删除`)
+  } catch (err: any) {
+    toast.error(`删除失败: ${err.message}`)
+  } finally {
+    deploying.value = ''
+  }
 }
 
 // ── Offline install ────────────────────────────────────────────────────────────
@@ -881,6 +1030,30 @@ function skillCategory(name: string): string {
 function skillEmoji(name: string): string {
   return CATEGORY_EMOJI[skillCategory(name)] ?? '⚡'
 }
+
+// SafeSkill 源的 skill 自带服务端分类,优先用其中文标签;否则回退到按名字前缀推断。
+function skillCategoryLabel(skill: any): string {
+  if (skill.category && SAFESKILL_CATEGORY_LABEL[skill.category]) {
+    return SAFESKILL_CATEGORY_LABEL[skill.category]
+  }
+  return skillCategory(skill.name)
+}
+
+function formatInstalls(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k'
+  return String(n)
+}
+
+function formatRelTime(ms: number): string {
+  const diff = Date.now() - ms
+  const day = 86_400_000
+  if (diff < 0) return '刚刚更新'
+  if (diff < day) return '今天更新'
+  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前更新`
+  if (diff < 365 * day) return `${Math.floor(diff / (30 * day))} 个月前更新`
+  return `${Math.floor(diff / (365 * day))} 年前更新`
+}
 </script>
 
 <style scoped>
@@ -1001,7 +1174,7 @@ function skillEmoji(name: string): string {
   font-size: var(--text-sm);
   font-family: var(--font-sans);
   border: 1px solid var(--border);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--text-primary);
   outline: none;
@@ -1012,6 +1185,35 @@ function skillEmoji(name: string): string {
 .search-input:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(99,102,241,0.1), 0 12px 24px rgba(99,102,241,0.08);
+}
+
+/* registry tab 搜索框独占一行,不参与 row 伸缩 */
+.registry-search {
+  flex: none;
+  width: 100%;
+}
+
+/* 分层筛选行:来源 segment + 分类 */
+.filter-row {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
 }
 
 .filter-chips {
@@ -1111,6 +1313,35 @@ function skillEmoji(name: string): string {
   gap: var(--space-3);
 }
 
+/* 工具栏下拉:固定宽度,不被 flex 拉伸成长条 */
+.toolbar-select {
+  flex: 0 0 auto;
+}
+
+.load-more-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.load-more-hint,
+.load-more-spinner {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--tint-medium);
+  background: var(--surface);
+}
+
+.load-more-spinner {
+  color: var(--accent-text);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
 .skill-card {
   position: relative;
   overflow: hidden;
@@ -1148,6 +1379,10 @@ function skillEmoji(name: string): string {
   min-height: 272px;
 }
 
+.skill-card-installed {
+  cursor: pointer;
+}
+
 .skill-card-bundled.bundled-needs-setup {
   border-color: rgba(217, 119, 6, 0.24);
 }
@@ -1160,6 +1395,9 @@ function skillEmoji(name: string): string {
 .skill-card-header,
 .skill-desc,
 .skill-footnote,
+.skill-extra-meta,
+.skill-keywords,
+.installed-scopes,
 .skill-actions,
 .dep-section,
 .install-section {
@@ -1233,6 +1471,28 @@ function skillEmoji(name: string): string {
   white-space: nowrap;
 }
 
+.skill-trust-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--surface-2);
+  color: var(--success-text);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--success-bg);
+  white-space: nowrap;
+}
+
+.skill-installs {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--tint-strong);
+  white-space: nowrap;
+}
+
 .skill-desc {
   font-size: var(--text-sm);
   color: var(--text-secondary);
@@ -1248,6 +1508,51 @@ function skillEmoji(name: string): string {
   font-size: var(--text-xs);
   line-height: 1.55;
   color: var(--text-muted);
+}
+
+.skill-extra-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.sem-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.kw-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--tint-medium);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+}
+
+.skill-source-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent-subtle, rgba(99, 102, 241, 0.08));
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
 }
 
 .skill-actions {
@@ -1280,6 +1585,40 @@ function skillEmoji(name: string): string {
   border: 1px solid var(--success-bg);
   padding: 3px 8px;
   border-radius: var(--radius-full);
+  white-space: nowrap;
+  animation: installed-pop 0.36s cubic-bezier(0.34, 1.32, 0.64, 1);
+}
+
+@keyframes installed-pop {
+  from { opacity: 0; transform: scale(0.55); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.installed-scopes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.installed-scopes-label {
+  font-size: var(--text-xs);
+  color: var(--success-text);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.installed-scope-chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--success-text);
+  background: var(--surface-2);
+  border: 1px solid var(--success-bg);
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

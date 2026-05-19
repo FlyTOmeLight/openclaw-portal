@@ -12,7 +12,41 @@
         :key="msg.id"
         :class="['cpanel-msg', msg.role]"
       >
-        <div class="cpanel-bubble">
+        <!-- Tool-call step cards -->
+        <details
+          v-for="step in msg.steps"
+          :key="step.id"
+          class="tool-step-card"
+          :open="step.status === 'running'"
+        >
+          <summary class="tool-step-summary">
+            <span class="tool-step-icon">⚡</span>
+            <span class="tool-step-name">{{ step.name }}</span>
+            <span :class="['tool-step-status', step.status]">{{ toolStatusLabel(step.status) }}</span>
+            <span v-if="step.ts" class="tool-step-time">{{ formatTime(step.ts) }}</span>
+          </summary>
+          <div class="tool-step-body">
+            <div v-if="step.input !== undefined" class="tool-step-section">
+              <div class="tool-step-section-label">入参</div>
+              <pre class="tool-step-pre">{{ formatToolValue(step.input) }}</pre>
+            </div>
+            <div v-if="step.output !== undefined" class="tool-step-section">
+              <div class="tool-step-section-label">输出</div>
+              <pre class="tool-step-pre">{{ formatToolValue(step.output) }}</pre>
+            </div>
+          </div>
+        </details>
+
+        <!-- Transient run-status indicator -->
+        <div v-if="msg.liveStatus" :class="['live-status', { done: msg.liveStatus.done }]">
+          <span class="live-status-dot" />
+          <span>{{ msg.liveStatus.text }}</span>
+        </div>
+
+        <div
+          v-if="msg.text || msg.reasoning || msg.streaming || msg.usage"
+          class="cpanel-bubble"
+        >
           <!-- thinking -->
           <details
             v-if="msg.reasoning"
@@ -86,6 +120,7 @@
 import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useAgentChat } from '../composables/useAgentChat.js'
 import type { ChatMode } from '../composables/useAgentChat.js'
+import { toolStatusLabel, formatToolValue } from '../utils/chat-tools.js'
 
 const props = defineProps<{
   agentId: string
@@ -105,7 +140,7 @@ const agentEmoji = props.agentEmoji || '🤖'
 function phaseLabel(phase?: string): string {
   if (phase === 'thinking') return '正在思考…'
   if (phase === 'replying') return '正在回复…'
-  return '发送中…'
+  return '思考中'
 }
 
 function formatTime(ts: number): string {
@@ -243,6 +278,88 @@ watch(() => props.agentId, () => { chat.clear() })
   margin: 0;
   font-family: var(--font-mono);
 }
+
+/* tool-call step cards */
+.tool-step-card {
+  align-self: stretch;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+.tool-step-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+}
+.tool-step-summary::-webkit-details-marker { display: none; }
+.tool-step-icon { font-size: 13px; }
+.tool-step-name { font-family: var(--font-mono); color: var(--text-primary); }
+.tool-step-status {
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+.tool-step-status.running { color: var(--accent); background: var(--surface-2); }
+.tool-step-status.ok { color: #15803d; background: rgba(34,197,94,.12); }
+.tool-step-status.error { color: #b91c1c; background: rgba(239,68,68,.12); }
+.tool-step-time { margin-left: auto; font-weight: 400; color: var(--text-muted); }
+.tool-step-body {
+  border-top: 1px solid var(--border-soft);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tool-step-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.tool-step-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* transient run-status indicator */
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  width: fit-content;
+}
+.live-status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse .8s ease-in-out infinite alternate;
+}
+.live-status.done .live-status-dot { background: #22c55e; animation: none; }
 
 /* phase indicator */
 .phase-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }

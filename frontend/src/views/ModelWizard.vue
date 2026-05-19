@@ -425,6 +425,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import { useModelsStore } from '../stores/models.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 import { api } from '../api/client.js'
 import {
   API_OPTIONS,
@@ -437,6 +438,7 @@ import {
 
 const store = useModelsStore()
 const toast = useNaiveToast()
+const confirm = useConfirm()
 onMounted(() => store.load())
 const apiOptions = API_OPTIONS
 const providerPresets = PROVIDER_PRESETS
@@ -796,7 +798,7 @@ async function testCard(id: string, selectedModelId?: string) {
 }
 
 async function del(id: string) {
-  if (!confirm(`确认删除 Provider「${id}」？`)) return
+  if (!await confirm({ title: '删除 Provider', message: `确认删除 Provider「${id}」？`, confirmText: '删除', danger: true })) return
   await store.deleteProvider(id)
   toast.success('Provider 已删除')
 }

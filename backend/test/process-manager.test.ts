@@ -89,7 +89,11 @@ describe('ProcessManager', () => {
     mockPort(() => portAlive)
 
     runCliMock.mockResolvedValueOnce('Gateway service not loaded.\nStart with: openclaw gateway install')
-    vi.mocked(cp.execFileSync).mockReturnValue('99\n' as any)
+    // No systemd unit — `systemctl cat` fails, forcing the legacy fallback.
+    vi.mocked(cp.execFileSync).mockImplementation((cmd: any) => {
+      if (cmd === 'systemctl') throw new Error('Unit openclaw-gateway.service could not be found.')
+      return '99\n' as any
+    })
 
     const mockChild: any = {
       pid: 99,
@@ -125,5 +129,70 @@ describe('ProcessManager', () => {
   it('stop() throws if not running', async () => {
     mockPort(() => false)
     await expect(manager.stop()).rejects.toThrow('not running')
+  })
+
+  it('start() uses `sudo systemctl start` when the gateway systemd unit exists', async () => {
+    let portAlive = false
+    mockPort(() => portAlive)
+    vi.mocked(cp.execFileSync).mockImplementation((cmd: any, args: any) => {
+      if (cmd === 'systemctl' && args?.[0] === 'cat') return '' as any // unit exists
+      if (cmd === 'sudo') { portAlive = true; return '' as any }        // systemctl start
+      return '' as any
+    })
+
+    await manager.start()
+
+    expect(cp.execFileSync).toHaveBeenCalledWith(
+      'sudo', ['-n', 'systemctl', 'start', 'openclaw-gateway'], expect.any(Object),
+    )
+    expect(cp.spawn).not.toHaveBeenCalled()
+    expect(runCliMock).not.toHaveBeenCalled()
+  })
+
+  it('stop() uses `sudo systemctl stop` when the gateway systemd unit exists', async () => {
+    let portAlive = true
+    mockPort(() => portAlive)
+    vi.mocked(cp.execFileSync).mockImplementation((cmd: any, args: any) => {
+      if (cmd === 'systemctl' && args?.[0] === 'cat') return '' as any
+      if (cmd === 'sudo') { portAlive = false; return '' as any }
+      return '12345\n' as any
+    })
+
+    await manager.stop()
+
+    expect(cp.execFileSync).toHaveBeenCalledWith(
+      'sudo', ['-n', 'systemctl', 'stop', 'openclaw-gateway'], expect.any(Object),
+    )
+  })
+
+  it('restart() issues a single `sudo systemctl restart` when the unit exists', async () => {
+    mockPort(() => true)
+    vi.mocked(cp.execFileSync).mockImplementation((cmd: any, args: any) => {
+      if (cmd === 'systemctl' && args?.[0] === 'cat') return '' as any
+      if (cmd === 'sudo') return '' as any
+      return '12345\n' as any
+    })
+
+    await manager.restart()
+
+    expect(cp.execFileSync).toHaveBeenCalledWith(
+      'sudo', ['-n', 'systemctl', 'restart', 'openclaw-gateway'], expect.any(Object),
+    )
+    expect(runCliMock).not.toHaveBeenCalled()
+  })
+
+  it('start() surfaces a sudoers hint when `sudo systemctl` is denied', async () => {
+    mockPort(() => false)
+    vi.mocked(cp.execFileSync).mockImplementation((cmd: any, args: any) => {
+      if (cmd === 'systemctl' && args?.[0] === 'cat') return '' as any
+      if (cmd === 'sudo') {
+        const err: any = new Error('sudo: a password is required')
+        err.stderr = 'sudo: a password is required'
+        throw err
+      }
+      return '' as any
+    })
+
+    await expect(manager.start()).rejects.toThrow('sudoers')
   })
 })

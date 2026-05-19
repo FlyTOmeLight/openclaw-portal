@@ -9,6 +9,7 @@ import type {
   ConfiguredPlatform,
   OpenclawConfig,
 } from '../types/openclaw.js'
+import type { ProcessManager } from './process-manager.js'
 import { runCli } from './cli-runner.js'
 import { serializePath, atomicWriteFile } from './file-lock.js'
 
@@ -171,6 +172,7 @@ export class ChannelManager {
   constructor(
     private readonly configPath: string,
     private readonly openclawBin: string,
+    private readonly processManager: ProcessManager,
   ) {}
 
   private async readConfig(): Promise<OpenclawConfig> {
@@ -208,8 +210,11 @@ export class ChannelManager {
     })
   }
 
+  // The gateway loads channel config at startup and holds it in memory, so a
+  // file write alone never takes effect. Restart the gateway (SIGUSR1 soft
+  // reload) the same way plugin changes do — there is no `openclaw reload`.
   private triggerReload(): void {
-    runCli(this.openclawBin, ['reload']).catch(() => {})
+    this.processManager.restart().catch(() => {})
   }
 
   private getBindingsArray(cfg: OpenclawConfig): AgentRouteBinding[] {

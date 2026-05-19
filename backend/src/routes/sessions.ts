@@ -71,9 +71,15 @@ async function getSessionsForAgentDir(agentDir: string) {
   if (!existsSync(sessionsDir)) return []
   try {
     const entries = await readdir(sessionsDir, { withFileTypes: true })
-    // Sessions are .jsonl files; legacy code expected directories — handle both
+    // Sessions are .jsonl files; legacy code expected directories — handle both.
+    // Exclude side-car artifacts that also end in .jsonl: trajectory traces use
+    // a different schema (no `message` events) and checkpoints are session forks.
     const sessionEntries = entries.filter(e =>
-      (e.isFile() && e.name.endsWith('.jsonl')) || e.isDirectory()
+      (e.isFile()
+        && e.name.endsWith('.jsonl')
+        && !e.name.endsWith('.trajectory.jsonl')
+        && !/\.checkpoint\.[^/]*\.jsonl$/.test(e.name))
+      || e.isDirectory()
     )
     const sessions = await Promise.all(sessionEntries.map(async entry => {
       const sessionPath = join(sessionsDir, entry.name)

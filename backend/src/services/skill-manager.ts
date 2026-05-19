@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile, rename, mkdir, cp, rm } from 'fs/promises'
 import { join, basename } from 'path'
 import { existsSync } from 'fs'
+import { homedir } from 'os'
 import type { RegistrySource } from './settings-manager.js'
 import { spawnSync } from 'child_process'
 
@@ -10,15 +11,24 @@ export interface Skill {
   agent: string | null
   enabled: boolean
   path: string
+  installSource?: string   // 安装来源:ClawHub / SafeSkill / URL 链接 / 离线上传
+  relPath?: string         // 相对家目录的路径,供 FileBrowser 定位
 }
 
 export interface RegistrySkill extends Skill {
   source: string
   downloadUrl?: string
   slug?: string
-  sourceType?: 'clawhub' | 'json' | 'skillhub'
+  sourceType?: 'clawhub' | 'json' | 'safeskill'
   sourceUrl?: string
   installable?: boolean
+  category?: string      // safeskill: category.field
+  trustScore?: number    // safeskill: trust_score (0-100)
+  installs?: number      // safeskill: stats.total_installs
+  author?: string        // clawhub: metaContent.owner / safeskill: namespace
+  version?: string       // clawhub: version
+  updatedAt?: number     // 毫秒时间戳
+  keywords?: string[]    // clawhub: Keywords / safeskill: llm_tags
 }
 
 export class SkillManager {
@@ -89,13 +99,13 @@ export class SkillManager {
    * List registry skills from all configured sources.
    * If sources is empty, falls back to the built-in global skills dir.
    */
-  async listRegistry(sources: RegistrySource[], query = '', sourceId?: string): Promise<RegistrySkill[]> {
+  async listRegistry(sources: RegistrySource[], query = '', sourceId?: string, category = '', page = 1): Promise<RegistrySkill[]> {
     const selectedSources = sourceId
       ? sources.filter(src => src.id === sourceId)
       : sources
     const all: RegistrySkill[] = []
     for (const src of selectedSources) {
-      const skills = await this.readRegistrySource(src, query)
+      const skills = await this.readRegistrySource(src, query, category, page)
       all.push(...skills)
     }
     return all
@@ -109,8 +119,8 @@ export class SkillManager {
     return 'https://skills.volces.com/api/v1'
   }
 
-  private isSkillHubSource(url: string): boolean {
-    return /skillhub\.cn/i.test(url)
+  private isSafeSkillSource(url: string): boolean {
+    return /safeskill\.cn/i.test(url)
   }
 
   private parseJsonFromMixedOutput(raw: string): any {
@@ -129,87 +139,93 @@ export class SkillManager {
     }
   }
 
-  private async readClawHubSource(src: RegistrySource, query = ''): Promise<RegistrySkill[]> {
+  private async readClawHubSource(src: RegistrySource, query = '', page = 1): Promise<RegistrySkill[]> {
     try {
       const apiBase = this.clawHubApiBase(src.url)
-      const search = new URLSearchParams({
-        q: query,
-        limit: query ? '50' : '100',
-      })
+      const search = new URLSearchParams({ q: query, limit: '30' })
+      if (page > 1) {
+        // ClawHub 用 base64 游标分页:marker = base64({offset,limit})
+        const marker = Buffer.from(
+          JSON.stringify({ offset: (page - 1) * 30, limit: 30 }),
+        ).toString('base64')
+        search.set('marker', marker)
+      }
       const resp = await fetch(`${apiBase}/search?${search.toString()}`, {
         signal: AbortSignal.timeout(10000),
       })
       if (!resp.ok) return []
       const parsed = await resp.json() as { results?: any[] }
       const items = Array.isArray(parsed?.results) ? parsed.results : []
-      return items.map((item: any): RegistrySkill => ({
-        name: item.displayName ?? item.name ?? item.slug ?? '',
-        slug: item.slug ?? item.name ?? '',
-        description: item.summary ?? item.description ?? item.metaContent?.DisplayDescription ?? '',
-        agent: null,
-        enabled: true,
-        path: '',
-        source: src.name,
-        sourceType: 'clawhub',
-        sourceUrl: src.url,
-        installable: true,
-      })).filter((s: RegistrySkill) => Boolean(s.slug))
+      return items.map((item: any): RegistrySkill => {
+        const meta = item.metaContent ?? {}
+        return {
+          name: item.displayName ?? item.name ?? item.slug ?? '',
+          slug: item.slug ?? item.name ?? '',
+          description: meta.DisplayDescription || item.summary || item.description || '',
+          agent: null,
+          enabled: true,
+          path: '',
+          source: src.name,
+          sourceType: 'clawhub',
+          sourceUrl: src.url,
+          installable: true,
+          author: meta.owner || undefined,
+          version: item.version || undefined,
+          updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : undefined,
+          keywords: Array.isArray(meta.Keywords) ? meta.Keywords.slice(0, 4) : undefined,
+        }
+      }).filter((s: RegistrySkill) => Boolean(s.slug))
     } catch {
       return []
     }
   }
 
-  private stripAnsi(text: string): string {
-    return text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
-  }
-
-  private async readSkillHubSource(src: RegistrySource, query = ''): Promise<RegistrySkill[]> {
-    const trimmed = query.trim()
-    if (!trimmed) return []
-    // Reject leading dash to prevent CLI flag injection.
-    if (trimmed.startsWith('-')) return []
-    const result = spawnSync('npx', ['-y', 'skillhub', 'search', trimmed, '-l', '30'], {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-      env: {
-        ...process.env,
-        HOME: '/tmp',
-        XDG_CONFIG_HOME: '/tmp',
-      },
-      maxBuffer: 8 * 1024 * 1024,
-    })
-    if (result.status !== 0) return []
-    const stdout = this.stripAnsi(String(result.stdout || ''))
-    const lines = stdout.split('\n')
-    const skills: RegistrySkill[] = []
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trimEnd()
-      const match = line.match(/^\[(\d+)\]\s+([^\s]+)\s+/)
-      if (!match) continue
-      const slug = match[2]
-      const name = slug.split('/').pop() || slug
-      const descLine = (lines[i + 1] || '').trim()
-      const description = descLine
-        .replace(/^⬇\s*\d+\s*⭐\s*[\d.kK]+\s*/u, '')
-        .replace(/^⬇.*?\s{2,}/, '')
-        .trim()
-      skills.push({
-        name,
-        slug,
-        description,
-        agent: null,
-        enabled: true,
-        path: '',
-        source: src.name,
-        sourceType: 'skillhub',
-        sourceUrl: src.url,
-        installable: true,
+  /** Read skills from a SafeSkill hub (safeskill.cn) via its public REST search API. */
+  private async readSafeSkillSource(src: RegistrySource, query = '', category = '', page = 1): Promise<RegistrySkill[]> {
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: '30',
+        status: 'published',
+        sort_by: 'total_installs',
+        sort_order: 'desc',
+        category: category || 'all',
       })
+      if (query.trim()) params.set('q', query.trim())
+      const resp = await fetch(`https://safeskill.cn/web/v1/hub/skills/search?${params}`, {
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!resp.ok) return []
+      const parsed = await resp.json() as { data?: { items?: any[] } }
+      const items = Array.isArray(parsed?.data?.items) ? parsed.data.items : []
+      return items.map((it: any): RegistrySkill => {
+        const slug = `${it.space ?? it.namespace ?? ''}/${it.name ?? ''}`.replace(/^\/+|\/+$/g, '')
+        const tags = it.cn?.llm_tags ?? it.en?.llm_tags
+        return {
+          name: it.name ?? slug.split('/').pop() ?? '',
+          slug,
+          description: it.description ?? it.summary ?? '',
+          agent: null,
+          enabled: true,
+          path: '',
+          source: src.name,
+          sourceType: 'safeskill',
+          sourceUrl: src.url,
+          installable: true,
+          category: it.category?.field ?? undefined,
+          trustScore: typeof it.trust_score === 'number' ? it.trust_score : undefined,
+          installs: it.stats?.total_installs,
+          author: it.namespace || undefined,
+          updatedAt: typeof it.updated_at === 'number' ? it.updated_at * 1000 : undefined,
+          keywords: Array.isArray(tags) ? tags.slice(0, 4) : undefined,
+        }
+      }).filter((s: RegistrySkill) => Boolean(s.slug) && s.slug !== '/')
+    } catch {
+      return []
     }
-    return skills
   }
 
-  private async readRegistrySource(src: RegistrySource, query = ''): Promise<RegistrySkill[]> {
+  private async readRegistrySource(src: RegistrySource, query = '', category = '', page = 1): Promise<RegistrySkill[]> {
     if (src.type === 'local') {
       if (!existsSync(src.url)) return []
       const skills = await this.readSkillDir(src.url, null, true)
@@ -224,10 +240,10 @@ export class SkillManager {
 
     if (src.type === 'remote') {
       if (this.isClawHubSource(src.url)) {
-        return this.readClawHubSource(src, query)
+        return this.readClawHubSource(src, query, page)
       }
-      if (this.isSkillHubSource(src.url)) {
-        return this.readSkillHubSource(src, query)
+      if (this.isSafeSkillSource(src.url)) {
+        return this.readSafeSkillSource(src, query, category, page)
       }
       try {
         const resp = await fetch(src.url, { signal: AbortSignal.timeout(8000) })
@@ -307,7 +323,7 @@ export class SkillManager {
       const skillPath = resolveFn(extractDir, skillFolderName)
       if (!skillPath.startsWith(resolveFn(extractDir) + '/')) throw new Error('Path traversal detected')
 
-      return await this.installSkill(skillPath, agent)
+      return await this.installSkill(skillPath, agent, 'URL 链接')
     } finally {
       try {
         await rm(uploadDir, { recursive: true, force: true })
@@ -356,19 +372,21 @@ export class SkillManager {
     }
 
     const skillPath = join(workdir, dir, slug)
+    await this.writeSkillMeta(skillPath, 'ClawHub')
     const description = existsSync(join(skillPath, 'SKILL.md'))
       ? await this.parseDescription(join(skillPath, 'SKILL.md'))
       : ''
-    return { name: slug, description, agent, enabled: true, path: skillPath }
+    return { name: slug, description, agent, enabled: true, path: skillPath, installSource: 'ClawHub' }
   }
 
-  async installFromSkillHub(slug: string, agent: string | null): Promise<Skill> {
+  async installFromSafeSkill(slug: string, agent: string | null): Promise<Skill> {
+    // Reject untrusted inputs that could be interpreted as CLI flags.
     if (slug.startsWith('-') || !/^[A-Za-z0-9_./-]{1,128}$/.test(slug)) {
       throw new Error(`Invalid slug: ${slug}`)
     }
     const workdir = agent ? await this.resolveAgentWorkspace(agent) : this.openclawHome
-    const projectSkillRoot = join(workdir, '.codex', 'skills')
-    const targetRoot = join(workdir, 'skills')
+    const skillRoot = join(workdir, 'skills')
+    await mkdir(skillRoot, { recursive: true })
 
     const listEntries = async (dir: string): Promise<string[]> => {
       if (!existsSync(dir)) return []
@@ -376,45 +394,34 @@ export class SkillManager {
       return entries.filter(entry => entry.isDirectory()).map(entry => entry.name)
     }
 
-    await mkdir(projectSkillRoot, { recursive: true })
-    await mkdir(targetRoot, { recursive: true })
-
-    const before = new Set(await listEntries(projectSkillRoot))
-    const result = spawnSync('npx', ['-y', 'skillhub', 'install', slug, '--platform', 'codex', '--project', '--force'], {
+    const before = new Set(await listEntries(skillRoot))
+    // Build the safeskill:// ref ourselves from the validated slug — never exec
+    // the npx_install_cmd string returned by the API.
+    const ref = `safeskill://skillsh/${slug}@latest`
+    const result = spawnSync('npx', [
+      '-y', '@safeskill/cli', 'add', ref, '-y', '-a', 'openclaw', '--copy',
+    ], {
       cwd: workdir,
       stdio: 'pipe',
       encoding: 'utf-8',
+      env: { ...process.env, DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1' },
       maxBuffer: 8 * 1024 * 1024,
     })
-
     if (result.status !== 0) {
-      throw new Error(String(result.stderr || result.stdout || '执行 skillhub 安装失败'))
+      throw new Error(String(result.stderr || result.stdout || '执行 SafeSkill 安装失败'))
     }
 
-    const after = await listEntries(projectSkillRoot)
+    const after = await listEntries(skillRoot)
     const created = after.find(name => !before.has(name)) || slug.split('/').pop() || slug
-    const installedPath = join(projectSkillRoot, created)
-    const targetPath = join(targetRoot, created)
-
-    if (!existsSync(installedPath)) {
-      throw new Error('SkillHub 安装完成，但未找到生成的技能目录')
+    const skillPath = join(skillRoot, created)
+    if (!existsSync(skillPath)) {
+      throw new Error('SafeSkill 安装完成，但未找到生成的技能目录')
     }
-
-    if (existsSync(targetPath)) {
-      await rm(targetPath, { recursive: true, force: true })
-    }
-
-    await cp(installedPath, targetPath, { recursive: true })
-    const description = existsSync(join(targetPath, 'SKILL.md'))
-      ? await this.parseDescription(join(targetPath, 'SKILL.md'))
+    await this.writeSkillMeta(skillPath, 'SafeSkill')
+    const description = existsSync(join(skillPath, 'SKILL.md'))
+      ? await this.parseDescription(join(skillPath, 'SKILL.md'))
       : ''
-    return {
-      name: created,
-      description,
-      agent,
-      enabled: true,
-      path: targetPath,
-    }
+    return { name: created, description, agent, enabled: true, path: skillPath, installSource: 'SafeSkill' }
   }
 
   /** Install a SKILL.md file as a named skill */
@@ -427,8 +434,9 @@ export class SkillManager {
     await mkdir(skillDir, { recursive: true })
     const skillMdPath = join(skillDir, 'SKILL.md')
     await writeFile(skillMdPath, mdContent, 'utf-8')
+    await this.writeSkillMeta(skillDir, '离线上传')
     const description = await this.parseDescription(skillMdPath)
-    return { name, description, agent, enabled: true, path: skillDir }
+    return { name, description, agent, enabled: true, path: skillDir, installSource: '离线上传' }
   }
 
   private async readSkillDir(
@@ -443,8 +451,12 @@ export class SkillManager {
         if (!entry.isDirectory() || entry.name === 'disabled') continue
         const skillMd = join(dir, entry.name, 'SKILL.md')
         if (!existsSync(skillMd)) continue
+        const skillPath = join(dir, entry.name)
         const description = await this.parseDescription(skillMd)
-        skills.push({ name: entry.name, description, agent, enabled, path: join(dir, entry.name) })
+        const installSource = await this.readSkillMeta(skillPath)
+        const home = homedir()
+        const relPath = skillPath.startsWith(home) ? skillPath.slice(home.length) : skillPath
+        skills.push({ name: entry.name, description, agent, enabled, path: skillPath, installSource, relPath })
       }
       return skills
     } catch {
@@ -454,8 +466,48 @@ export class SkillManager {
 
   private async parseDescription(skillMdPath: string): Promise<string> {
     const content = await readFile(skillMdPath, 'utf-8')
-    const match = content.match(/^description:\s*"?([^"\n]+)"?/m)
-    return match?.[1]?.trim() ?? ''
+    const lines = content.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^description:[ \t]*(.*)$/)
+      if (!m) continue
+      const rest = m[1].trim()
+      // YAML 块标量(description: | / description: >):读取后续缩进行
+      if (/^[|>][-+]?$/.test(rest)) {
+        const out: string[] = []
+        for (let j = i + 1; j < lines.length; j++) {
+          const ln = lines[j]
+          if (ln.trim() === '') { out.push(''); continue }
+          if (/^[ \t]/.test(ln)) { out.push(ln.trim()); continue }
+          break
+        }
+        return out.join(' ').replace(/\s+/g, ' ').trim()
+      }
+      // 单行:去掉两端引号
+      return rest.replace(/^["']|["']$/g, '').trim()
+    }
+    return ''
+  }
+
+  /** 写入安装来源标记到 skill 目录(失败不阻断安装) */
+  private async writeSkillMeta(skillPath: string, source: string): Promise<void> {
+    try {
+      await writeFile(
+        join(skillPath, '.portal-meta.json'),
+        JSON.stringify({ source, installedAt: Date.now() }, null, 2),
+        'utf-8',
+      )
+    } catch { /* 元数据可选,失败忽略 */ }
+  }
+
+  /** 读取 skill 目录的安装来源标记 */
+  private async readSkillMeta(skillPath: string): Promise<string | undefined> {
+    try {
+      const raw = await readFile(join(skillPath, '.portal-meta.json'), 'utf-8')
+      const meta = JSON.parse(raw)
+      return typeof meta?.source === 'string' ? meta.source : undefined
+    } catch {
+      return undefined
+    }
   }
 
   async disableSkill(name: string, agent: string): Promise<void> {
@@ -474,7 +526,21 @@ export class SkillManager {
     await rename(src, join(skillsDir, name))
   }
 
-  async installSkill(extractedPath: string, agent: string | null): Promise<Skill> {
+  /** Permanently delete an installed skill (enabled or disabled, global or per-agent). */
+  async deleteSkill(name: string, agent: string | null): Promise<void> {
+    const base = agent
+      ? join(await this.resolveAgentWorkspace(agent), 'skills')
+      : join(this.openclawHome, 'skills')
+    for (const dir of [join(base, name), join(base, 'disabled', name)]) {
+      if (existsSync(dir)) {
+        await rm(dir, { recursive: true, force: true })
+        return
+      }
+    }
+    throw new Error(`技能不存在: ${name}`)
+  }
+
+  async installSkill(extractedPath: string, agent: string | null, source = '离线上传'): Promise<Skill> {
     const name = basename(extractedPath)
     const destDir = agent
       ? join(await this.resolveAgentWorkspace(agent), 'skills')
@@ -482,7 +548,8 @@ export class SkillManager {
     await mkdir(destDir, { recursive: true })
     const dest = join(destDir, name)
     await rename(extractedPath, dest)
+    await this.writeSkillMeta(dest, source)
     const description = await this.parseDescription(join(dest, 'SKILL.md'))
-    return { name, description, agent, enabled: true, path: dest }
+    return { name, description, agent, enabled: true, path: dest, installSource: source }
   }
 }

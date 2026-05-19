@@ -137,8 +137,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '../api/client.js'
 import { useToastStore } from '../stores/toast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const TABS = [
   { value: 'all',      icon: '📄', label: '全部' },
@@ -272,7 +274,7 @@ function loadBackupIntoEditor(b: any) {
 }
 
 async function restoreBackup(b: any) {
-  if (!confirm(`确认还原到 ${formatBackupTime(b.filename)}？\n当前配置将自动备份。`)) return
+  if (!await confirm({ title: '还原配置备份', message: `确认还原到 ${formatBackupTime(b.filename)}？当前配置将自动备份。`, confirmText: '还原', danger: true })) return
   restoring.value = b.filename
   try {
     const res = await api.configEditor.restore(b.filename)

@@ -128,8 +128,10 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { api } from '../api/client.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 
 const toast = useNaiveToast()
+const confirm = useConfirm()
 
 const LEVELS = [
   { value: 'all',   label: '全部' },
@@ -203,7 +205,7 @@ async function clearLogs() {
     toast.error('仅 Gateway 日志文件可清空，systemd journal 需通过系统工具管理')
     return
   }
-  if (!confirm('确认清空日志文件？')) return
+  if (!await confirm({ title: '清空日志', message: '确认清空日志文件？', confirmText: '清空', danger: true })) return
   try {
     await api.logs.clear(sourceFilter.value)
     entries.value = []

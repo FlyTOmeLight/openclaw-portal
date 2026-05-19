@@ -22,10 +22,10 @@ const DEFAULT_SETTINGS: PortalSettings = {
   npmRegistry: 'https://registry.npmjs.org',
   skillRegistrySources: [
     {
-      id: 'skillhub-cn',
-      name: 'SkillHub',
+      id: 'safeskill',
+      name: 'SafeSkill',
       type: 'remote',
-      url: 'https://skillhub.cn',
+      url: 'https://safeskill.cn',
     },
     {
       id: 'clawhub-cn',
@@ -34,7 +34,7 @@ const DEFAULT_SETTINGS: PortalSettings = {
       url: 'https://cn.clawhub-mirror.com',
     },
   ],
-  activeSkillRegistrySourceId: 'clawhub-cn',
+  activeSkillRegistrySourceId: 'safeskill',
 }
 
 function normalizeSources(sources: RegistrySource[]): RegistrySource[] {
@@ -82,6 +82,13 @@ export class SettingsManager {
       merged.skillRegistrySources = Array.isArray(merged.skillRegistrySources) && merged.skillRegistrySources.length > 0
         ? mergeDefaultSources(merged.skillRegistrySources)
         : [...DEFAULT_SETTINGS.skillRegistrySources]
+      // 迁移:移除已废弃的 SkillHub(skillhub.cn)源
+      merged.skillRegistrySources = merged.skillRegistrySources.filter(
+        (s: RegistrySource) => s.id !== 'skillhub-cn' && !/skillhub\.cn/i.test(s.url),
+      )
+      // SafeSkill 源始终排在最前
+      merged.skillRegistrySources.sort((a: RegistrySource, b: RegistrySource) =>
+        (a.id === 'safeskill' ? 0 : 1) - (b.id === 'safeskill' ? 0 : 1))
       if (!merged.activeSkillRegistrySourceId || !merged.skillRegistrySources.some((s: RegistrySource) => s.id === merged.activeSkillRegistrySourceId)) {
         merged.activeSkillRegistrySourceId = merged.skillRegistrySources[0]?.id ?? DEFAULT_SETTINGS.activeSkillRegistrySourceId
       }

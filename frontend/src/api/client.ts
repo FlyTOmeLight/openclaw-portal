@@ -51,6 +51,14 @@ export interface ChatCompleteOptions {
   conversationKey?: string
 }
 
+export interface PluginSearchResult {
+  name: string
+  version: string
+  description: string
+  npmSpec: string
+  installed: boolean
+}
+
 export const api = {
   service: {
     status: () => req<{ state: string; pid?: number }>('GET', '/service'),
@@ -72,10 +80,12 @@ export const api = {
   skills: {
     list: () => cached('skills/list', 15_000, () => req<any[]>('GET', '/skills')),
     listBundled: () => cached('skills/bundled', 30_000, () => req<{ skills: any[]; skillsDir: string | null }>('GET', '/skills/bundled')),
-    registry: (q = '', sourceId = '') => {
+    registry: (q = '', sourceId = '', category = '', page = 1) => {
       const params = new URLSearchParams()
       if (q) params.set('q', q)
       if (sourceId) params.set('sourceId', sourceId)
+      if (category) params.set('category', category)
+      if (page > 1) params.set('page', String(page))
       return req<any[]>('GET', `/skills/registry${params.toString() ? `?${params.toString()}` : ''}`)
     },
     deploy: (name: string, agent: string) => req<any>('POST', `/skills/registry/${encodeURIComponent(name)}/deploy`, { agent })
@@ -90,6 +100,8 @@ export const api = {
       .then(r => { bust('skills/list'); return r }),
     enable: (name: string, agent: string) => req<{ ok: boolean }>('POST', `/skills/${encodeURIComponent(name)}/enable`, { agent })
       .then(r => { bust('skills/list'); return r }),
+    delete: (name: string, agent: string | null) => req<{ ok: boolean }>('POST', `/skills/${encodeURIComponent(name)}/delete`, { agent })
+      .then(r => { bust('skills/list', 'skills/bundled'); return r }),
     install: (file: File, agent: string | null, skillName?: string) => {
       const form = new FormData()
       form.append('file', file)
@@ -119,6 +131,20 @@ export const api = {
       bust('plugins/list', 'ch/plugin-status')
       return res.json() as Promise<{ ok: boolean; result: { command: string; stdout: string; stderr: string }; plugins: any[] }>
     },
+    search: (q: string, limit = 25) =>
+      req<{ results: PluginSearchResult[] }>(
+        'GET',
+        `/plugins/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      ),
+    getNpmRegistry: () => req<{ registry: string }>('GET', '/plugins/npm-registry'),
+    setNpmRegistry: (registry: string) =>
+      req<{ registry: string }>('POST', '/plugins/npm-registry', { registry }),
+    pingNpmRegistry: (registry: string) =>
+      req<{ ok: boolean; ms: number; message: string }>(
+        'POST',
+        '/plugins/npm-registry/ping',
+        { registry },
+      ),
     uninstall: (name: string) =>
       req<{ ok: boolean; result: { command: string; stdout: string; stderr: string }; plugins: any[] }>('DELETE', `/plugins/${encodeURIComponent(name)}`)
         .then(r => { bust('plugins/list', 'ch/plugin-status'); return r }),
@@ -242,6 +268,32 @@ export const api = {
       }
       generatedAt: number
     }>('GET', '/system/operator-overview'),
+    // ── Portal web self-upgrade ──────────────────────────────────────────
+    version: () => req<{
+      version: string
+      builtAt: string | null
+      supported: boolean
+      busy: boolean
+      rollbackAvailable: boolean
+      rollbackType: 'frontend' | 'backend-dist' | 'backend-full' | null
+      lastResult: { ok: boolean; action?: string; type?: string; version?: string; message?: string; ts?: number } | null
+    }>('GET', '/system/version'),
+    ping: () => req<{ ok: boolean; version: string }>('GET', '/system/ping'),
+    upgrade: (file: File) => {
+      const form = new FormData()
+      form.append('confirm', 'true')   // MUST precede the file part so it parses
+      form.append('file', file)
+      return fetch(`${BASE}/system/upgrade`, { method: 'POST', body: form }).then(async r => {
+        const json = await r.json()
+        if (!r.ok) throw new Error(json.error ?? '升级失败')
+        return json as { type: string; version: string; restarting: boolean }
+      })
+    },
+    rollback: () => req<{ type: string; restarting: boolean }>('POST', '/system/upgrade/rollback'),
+    upgradeStatus: () => req<{
+      state: 'idle' | 'in_progress' | 'done'
+      result?: { ok: boolean; action?: string; type?: string; version?: string; message?: string; ts?: number }
+    }>('GET', '/system/upgrade/status'),
   },
   sessions: {
     list: () => req<{ agentId: string; sessions: { id: string; mtime: number }[]; sessionCount: number }[]>('GET', '/sessions'),
@@ -309,6 +361,14 @@ export const api = {
     enable: (id: string) => req<{ ok: boolean }>('POST', `/cron/${encodeURIComponent(id)}/enable`),
     disable: (id: string) => req<{ ok: boolean }>('POST', `/cron/${encodeURIComponent(id)}/disable`),
     runs: (id: string, limit = 50) => req<any[]>('GET', `/cron/${encodeURIComponent(id)}/runs?limit=${limit}`),
+  },
+  dreaming: {
+    status: () => req<{ agentId: string; dreaming: any | null }>('GET', '/dreaming/status'),
+    getConfig: () => req<{ enabled: boolean; frequency: string; model: string; allowModelOverride: boolean }>('GET', '/dreaming/config'),
+    saveConfig: (patch: { enabled?: boolean; frequency?: string; model?: string }) =>
+      req<{ ok: boolean; result: any }>('PUT', '/dreaming/config', patch),
+    diary: () => req<{ exists: boolean; name: string; content: string }>('GET', '/dreaming/diary'),
+    run: () => req<{ ok: boolean; jobId: string; jobName: string }>('POST', '/dreaming/run'),
   },
   usage: {
     summary: () => req<any>('GET', '/usage/summary'),

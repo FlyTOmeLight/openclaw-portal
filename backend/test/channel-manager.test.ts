@@ -10,6 +10,10 @@ vi.mock('child_process', () => ({
 }))
 
 import { ChannelManager } from '../src/services/channel-manager.js'
+import type { ProcessManager } from '../src/services/process-manager.js'
+
+// triggerReload() restarts the gateway; tests only need the restart() stub.
+const stubProcessManager = { restart: vi.fn().mockResolvedValue(undefined) } as unknown as ProcessManager
 
 const BASE_CONFIG = {
   models: { providers: {} },
@@ -32,7 +36,7 @@ describe('ChannelManager', () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'channel-manager-test-'))
     configPath = join(tmpDir, 'openclaw.json')
     await writeFile(configPath, JSON.stringify(BASE_CONFIG, null, 2))
-    manager = new ChannelManager(configPath, 'openclaw')
+    manager = new ChannelManager(configPath, 'openclaw', stubProcessManager)
   })
 
   afterEach(async () => {

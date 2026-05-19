@@ -391,6 +391,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client.js'
 import { useToastStore } from '../stores/toast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 import MarkdownEditor from '../components/MarkdownEditor.vue'
 import AgentChatPanel from '../components/AgentChatPanel.vue'
 import ToolTagInput from '../components/ToolTagInput.vue'
@@ -399,6 +400,7 @@ import AgentDashboard from '../components/AgentDashboard.vue'
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
+const confirm = useConfirm()
 
 const TOOL_PROFILES = [
   { value: 'minimal',   icon: '🔒', name: 'minimal',   desc: '最小权限' },
@@ -531,7 +533,7 @@ function openChannelsBindingPage() {
 
 async function removeBinding(binding: any) {
   const summary = formatBindingSummary(binding.match || {})
-  if (!window.confirm(`确定移除绑定「${summary}」吗？`)) return
+  if (!await confirm({ title: '移除绑定', message: `确定移除绑定「${summary}」吗？`, confirmText: '移除', danger: true })) return
   try {
     await api.channels.deleteAgentBinding(
       agentId.value,

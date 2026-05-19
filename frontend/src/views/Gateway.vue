@@ -406,7 +406,15 @@ const authModeMeta = computed(() => {
 })
 const officialControlUiUrl = computed(() => {
   if (typeof window === 'undefined') return '/'
-  const base = `${window.location.origin}/`
+  const loc = window.location
+  const isLoopback = loc.hostname === '127.0.0.1' || loc.hostname === 'localhost' || loc.hostname === '::1'
+  // Dev: portal runs on its own port, gateway on a different one — link straight
+  // to the gateway port. Prod (nginx): portal and gateway share one origin via
+  // path routing, so the origin root already is the gateway Control UI.
+  const devDirect = isLoopback && !!loc.port && loc.port !== String(form.port)
+  const base = devDirect
+    ? `${loc.protocol}//${loc.hostname}:${form.port}/`
+    : `${loc.origin}/`
   if (form.authMode === 'token' && form.token.trim()) {
     return `${base}#token=${encodeURIComponent(form.token.trim())}`
   }
