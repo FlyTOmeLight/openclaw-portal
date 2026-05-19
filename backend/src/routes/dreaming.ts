@@ -36,13 +36,43 @@ export async function dreamingRoutes(
 
   // ── 状态 ─────────────────────────────────────────────────────────────
   // doctor.memory.status 返回 { agentId, dreaming: { enabled, phases, counts… } }
+  //
+  // 注意 — memory-core 的 `doctor.memory.status` handler 走 cached path,
+  // 但首调仍需 lazy-init `getActiveMemorySearchManager`(打开 vector store +
+  // 扫 workspace dreaming store + 汇总三阶段托管 cron 状态),冷启动可能
+  // 超过默认 15s RPC timeout。这里:
+  //   1. 用更宽松的 30s timeout(memory-core 真的慢时不要太快放手)。
+  //   2. 首次 timeout 就重试一次(给 manager 一次 warm-up 机会)。
+  //   3. 仍 timeout 时返回 200 + `initializing: true`,让 UI 静默重试,
+  //      不再弹 toast.error;只有真正的 RPC 错误才返回 502。
+  const STATUS_RPC_TIMEOUT_MS = 30_000
   app.get('/api/dreaming/status', async (_req, reply) => {
-    try {
-      const r = await rpc().request('doctor.memory.status', {})
-      return { agentId: r?.agentId ?? 'main', dreaming: r?.dreaming ?? null }
-    } catch (err: any) {
-      return reply.status(502).send({ error: `网关 RPC 失败: ${err?.message ?? err}` })
+    const callOnce = () => rpc().request('doctor.memory.status', {}, STATUS_RPC_TIMEOUT_MS)
+    const isTimeout = (e: any) =>
+      typeof e?.message === 'string' && e.message.startsWith('Gateway RPC timeout')
+
+    let lastErr: any
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await callOnce()
+        return { agentId: r?.agentId ?? 'main', dreaming: r?.dreaming ?? null }
+      } catch (err: any) {
+        lastErr = err
+        if (!isTimeout(err)) break
+        // 短暂等待让 manager init 完成,再试一次
+        if (attempt === 0) await new Promise(res => setTimeout(res, 2000))
+      }
     }
+
+    if (isTimeout(lastErr)) {
+      return {
+        agentId: 'main',
+        dreaming: null,
+        initializing: true,
+        error: `网关 memory 子系统初始化中(${STATUS_RPC_TIMEOUT_MS / 1000}s 内未响应)`,
+      }
+    }
+    return reply.status(502).send({ error: `网关 RPC 失败: ${lastErr?.message ?? lastErr}` })
   })
 
   // ── 读配置 ───────────────────────────────────────────────────────────
