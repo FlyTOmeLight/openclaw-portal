@@ -363,7 +363,13 @@ export const api = {
     runs: (id: string, limit = 50) => req<any[]>('GET', `/cron/${encodeURIComponent(id)}/runs?limit=${limit}`),
   },
   dreaming: {
-    status: () => req<{ agentId: string; dreaming: any | null }>('GET', '/dreaming/status'),
+    // initializing/error 字段仅在 memory-core 冷启动 timeout 时由 backend 返回,
+    // UI 收到 initializing=true 时静默轮询而不弹 toast.error。
+    status: () =>
+      req<{ agentId: string; dreaming: any | null; initializing?: boolean; error?: string }>(
+        'GET',
+        '/dreaming/status',
+      ),
     getConfig: () => req<{ enabled: boolean; frequency: string; model: string; allowModelOverride: boolean }>('GET', '/dreaming/config'),
     saveConfig: (patch: { enabled?: boolean; frequency?: string; model?: string }) =>
       req<{ ok: boolean; result: any }>('PUT', '/dreaming/config', patch),

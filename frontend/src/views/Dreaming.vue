@@ -30,7 +30,8 @@
           </div>
         </div>
 
-        <div v-if="!status" class="empty-hint">无法获取状态 — 网关未响应。</div>
+        <div v-if="!status && initializing" class="empty-hint">网关 memory 子系统初始化中,自动重试…</div>
+        <div v-else-if="!status" class="empty-hint">无法获取状态 — 网关未响应。</div>
         <template v-else>
           <!-- 计数卡片 -->
           <div class="stat-grid">
@@ -178,7 +179,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { api } from '../api/client'
 import { useToastStore } from '../stores/toast'
 
@@ -191,6 +192,12 @@ const diaryLoading = ref(false)
 
 const agentId = ref('main')
 const status = ref<any | null>(null)
+// memory-core 冷启动时网关首调 doctor.memory.status 超时,backend 会返回
+// `{ initializing: true }`,UI 在此态自动轮询,不弹 toast.error。
+const initializing = ref(false)
+let initRetryTimer: ReturnType<typeof setTimeout> | null = null
+const INIT_RETRY_DELAY_MS = 4000
+const INIT_RETRY_MAX = 5
 const diary = ref<{ exists: boolean; name: string; content: string } | null>(null)
 
 // 表单 + 已保存基线(用于 dirty 判断)
@@ -224,12 +231,30 @@ const phaseList = computed(() => [
   { key: 'rem',   label: 'REM 阶段',   cfg: status.value?.phases?.rem },
 ])
 
-async function loadStatus() {
+async function loadStatus(retryCount = 0) {
+  if (initRetryTimer) {
+    clearTimeout(initRetryTimer)
+    initRetryTimer = null
+  }
   try {
     const r = await api.dreaming.status()
-    status.value = r.dreaming
     agentId.value = r.agentId
+    if (r.initializing) {
+      // 网关 memory 子系统冷启动,backend 返回 200 + initializing:true。
+      // 静默轮询直到拿到真实状态;超过 INIT_RETRY_MAX 次仍未就绪才提示。
+      initializing.value = true
+      status.value = null
+      if (retryCount < INIT_RETRY_MAX) {
+        initRetryTimer = setTimeout(() => void loadStatus(retryCount + 1), INIT_RETRY_DELAY_MS)
+      } else {
+        toast.error('网关 memory 子系统初始化耗时过长,请稍后手动刷新')
+      }
+      return
+    }
+    initializing.value = false
+    status.value = r.dreaming
   } catch (err: any) {
+    initializing.value = false
     status.value = null
     toast.error(`状态加载失败: ${err.message}`)
   }
@@ -329,6 +354,12 @@ async function onRun() {
 }
 
 onMounted(refreshAll)
+onBeforeUnmount(() => {
+  if (initRetryTimer) {
+    clearTimeout(initRetryTimer)
+    initRetryTimer = null
+  }
+})
 </script>
 
 <style scoped>
