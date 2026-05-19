@@ -121,4 +121,58 @@ export async function pluginsRoutes(app: FastifyInstance, pluginManager: PluginM
       }
     }
   )
+
+  app.get<{ Querystring: { q?: string; limit?: string } }>(
+    '/api/plugins/search',
+    async (req, reply) => {
+      const q = (req.query.q ?? '').trim()
+      if (!q) return { results: [] }
+      const parsedLimit = Number.parseInt(req.query.limit ?? '', 10)
+      const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 50) : 25
+      try {
+        const results = await pluginManager.search(q, limit)
+        return { results }
+      } catch (err: any) {
+        return reply.status(500).send({ error: err.message })
+      }
+    },
+  )
+
+  app.get('/api/plugins/npm-registry', async (_req, reply) => {
+    try {
+      return { registry: await pluginManager.getNpmRegistry() }
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message })
+    }
+  })
+
+  app.post<{ Body: { registry?: string } }>(
+    '/api/plugins/npm-registry',
+    async (req, reply) => {
+      const registry = (req.body?.registry ?? '').trim()
+      if (!registry) {
+        return reply.status(400).send({ error: 'registry 不能为空' })
+      }
+      try {
+        return { registry: await pluginManager.setNpmRegistry(registry) }
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message })
+      }
+    },
+  )
+
+  app.post<{ Body: { registry?: string } }>(
+    '/api/plugins/npm-registry/ping',
+    async (req, reply) => {
+      const registry = (req.body?.registry ?? '').trim()
+      if (!registry) {
+        return reply.status(400).send({ error: 'registry 不能为空' })
+      }
+      try {
+        return await pluginManager.pingNpmRegistry(registry)
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message })
+      }
+    },
+  )
 }

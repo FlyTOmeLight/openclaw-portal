@@ -489,6 +489,7 @@ import { useRoute } from 'vue-router'
 import QRCode from 'qrcode'
 import { api } from '../api/client.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 import PasswordInput from '../components/PasswordInput.vue'
 
 // strip ANSI escape codes from terminal output
@@ -541,6 +542,7 @@ type ConfiguredPlatform = { id: string; enabled: boolean; accounts: Array<{ acco
 type AgentBinding = { type?: string; agentId: string; match: Record<string, any> }
 
 const toast = useNaiveToast()
+const confirm = useConfirm()
 const route = useRoute()
 const activeTab = ref<'channels' | 'agents'>('channels')
 const loading = ref(false)
@@ -1111,7 +1113,7 @@ async function togglePlatform(platform: ConfiguredPlatform) {
 }
 
 async function removePlatform(platform: string) {
-  if (!window.confirm(`确定移除 ${platformLabel(platform)} 及其所有配置吗？`)) return
+  if (!await confirm({ title: '移除渠道', message: `确定移除 ${platformLabel(platform)} 及其所有配置吗？`, confirmText: '移除', danger: true })) return
   try {
     await api.channels.removeMessagingPlatform(platform)
     await refreshPage()
@@ -1122,7 +1124,7 @@ async function removePlatform(platform: string) {
 }
 
 async function removePlatformAccount(platform: string, accountId: string) {
-  if (!window.confirm(`确定移除账号 ${accountId || 'default'} 及其所有配置吗？`)) return
+  if (!await confirm({ title: '移除账号', message: `确定移除账号 ${accountId || 'default'} 及其所有配置吗？`, confirmText: '移除', danger: true })) return
   try {
     await api.channels.removeMessagingPlatform(platform, accountId)
     await refreshPage()
@@ -1200,7 +1202,7 @@ function extractBindingConfig(match: Record<string, any>): Record<string, any> {
 }
 
 async function deleteBinding(binding: AgentBinding) {
-  if (!window.confirm(`确定移除绑定「${formatBindingSummary(binding.match)}」吗？`)) return
+  if (!await confirm({ title: '移除绑定', message: `确定移除绑定「${formatBindingSummary(binding.match)}」吗？`, confirmText: '移除', danger: true })) return
   try {
     await api.channels.deleteAgentBinding(
       binding.agentId || 'main',

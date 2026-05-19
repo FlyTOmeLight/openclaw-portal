@@ -32,6 +32,7 @@ export const router = createRouter({
 
     // ── Core ───────────────────────────────────────────────
     { path: '/chat',       component: () => import('../views/Chat.vue') },
+    { path: '/files',      component: () => import('../views/FileBrowser.vue') },
     { path: '/topology',   component: () => import('../views/Topology.vue') },
 
     // ── Configuration ──────────────────────────────────────
@@ -42,6 +43,7 @@ export const router = createRouter({
     { path: '/skills',     component: () => import('../views/Skills.vue') },
     { path: '/plugins',    component: () => import('../views/Plugins.vue') },
     { path: '/memory',     component: () => import('../views/Memory.vue') },
+    { path: '/dreaming',   component: () => import('../views/Dreaming.vue') },
     { path: '/cron',       component: () => import('../views/Cron.vue') },
 
     // ── Observe & Operate ──────────────────────────────────
@@ -93,17 +95,10 @@ export const router = createRouter({
       ],
     },
 
-    {
-      path: '/tools',
-      component: () => import('../views/shells/ToolsShell.vue'),
-      redirect: '/tools/terminal',
-      children: [
-        { path: 'terminal', component: () => import('../views/Terminal.vue') },
-        { path: 'files',    component: () => import('../views/FileBrowser.vue') },
-      ],
-    },
+    { path: '/terminal',   component: () => import('../views/Terminal.vue') },
 
     { path: '/mcp',        component: () => import('../views/Mcp.vue') },
+    { path: '/upgrade',    component: () => import('../views/Upgrade.vue') },
     { path: '/settings',   component: () => import('../views/Settings.vue') },
 
     // ── Back-compat redirects (bookmarks, docs, old URLs) ──
@@ -115,8 +110,10 @@ export const router = createRouter({
     { path: '/audit',      redirect: '/insights/audit' },
     { path: '/gateway',    redirect: '/gateway-config/gateway' },
     { path: '/config',     redirect: '/gateway-config/raw' },
-    { path: '/terminal',   redirect: '/tools/terminal' },
-    { path: '/filebrowser', redirect: '/tools/files' },
+    { path: '/tools',          redirect: '/terminal' },
+    { path: '/tools/terminal', redirect: '/terminal' },
+    { path: '/tools/files',    redirect: '/files' },
+    { path: '/filebrowser',    redirect: '/files' },
   ],
 })
 

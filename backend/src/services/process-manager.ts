@@ -22,11 +22,19 @@ const STATE_POLL_TIMEOUT_MS = 15000
 
 const STATUS_CACHE_TTL_MS = 5000
 
+// systemd unit installed by the Kylin offline installer. When present, the
+// portal controls the gateway through `systemctl` (matching uid) instead of
+// signalling the pid directly — the latter fails with EPERM whenever the
+// gateway runs under a different user than the portal.
+const GATEWAY_UNIT = 'openclaw-gateway'
+
 export class ProcessManager {
   private _statusCache: ProcessStatus | null = null
   private _statusTs = 0
   private _inFlight: Promise<ProcessStatus> | null = null
   private _restarting = false
+  private _systemdChecked = false
+  private _systemdUnit = false
 
   constructor(private readonly opts: ProcessManagerOptions) {}
 
@@ -141,6 +149,38 @@ export class ProcessManager {
     return undefined
   }
 
+  /** True when the gateway is managed by a systemd unit. Result is cached. */
+  private hasSystemdUnit(): boolean {
+    if (this._systemdChecked) return this._systemdUnit
+    this._systemdChecked = true
+    try {
+      // `systemctl cat` is a read-only query — no sudo needed.
+      execFileSync('systemctl', ['cat', GATEWAY_UNIT], { stdio: 'ignore', timeout: 3000 })
+      this._systemdUnit = true
+    } catch {
+      this._systemdUnit = false
+    }
+    return this._systemdUnit
+  }
+
+  /** Control the gateway unit via sudo. Relies on the NOPASSWD sudoers grant
+   *  (/etc/sudoers.d/openclaw-gateway) the offline installer drops. */
+  private runSystemctl(verb: 'start' | 'stop' | 'restart'): void {
+    try {
+      execFileSync('sudo', ['-n', 'systemctl', verb, GATEWAY_UNIT], {
+        timeout: 20000,
+        stdio: 'pipe',
+        encoding: 'utf-8',
+      })
+    } catch (err: any) {
+      const detail = (err?.stderr || err?.message || '').toString().trim().slice(0, 300)
+      throw new Error(
+        `systemctl ${verb} ${GATEWAY_UNIT} 失败: ${detail || '未知错误'}` +
+        `（确认 portal 用户已获 /etc/sudoers.d/openclaw-gateway 授权）`,
+      )
+    }
+  }
+
   private signalPid(pid: number, signal: 'SIGTERM' | 'SIGKILL'): boolean {
     try {
       process.kill(pid, signal)
@@ -175,6 +215,18 @@ export class ProcessManager {
   async start(): Promise<void> {
     const status = await this.getStatus()
     if (status.state === 'running') throw new Error('OpenClaw is already running')
+
+    // systemd-managed gateway: hand off to the unit so uid/ownership stays
+    // consistent and `Restart=on-failure` keeps applying.
+    if (this.hasSystemdUnit()) {
+      this.runSystemctl('start')
+      const started = await this.waitForState('running')
+      if (started.state !== 'running') {
+        throw new Error(`OpenClaw failed to start. Check: journalctl -u ${GATEWAY_UNIT} -n 50`)
+      }
+      this.invalidateStatusCache()
+      return
+    }
 
     const errors: string[] = []
 
@@ -219,6 +271,18 @@ export class ProcessManager {
     let status = await this.getStatus()
     if (status.state !== 'running') throw new Error('OpenClaw is not running')
 
+    // systemd-managed gateway: a clean `systemctl stop` will not be undone by
+    // `Restart=on-failure` (only failures trigger respawn).
+    if (this.hasSystemdUnit()) {
+      this.runSystemctl('stop')
+      const stopped = await this.waitForState('stopped', 10000)
+      if (stopped.state !== 'stopped') {
+        throw new Error(`OpenClaw failed to stop. Check: journalctl -u ${GATEWAY_UNIT} -n 50`)
+      }
+      this.invalidateStatusCache()
+      return
+    }
+
     const errors: string[] = []
 
     // Try CLI stop (graceful, daemon-aware).
@@ -259,6 +323,17 @@ export class ProcessManager {
     this._restarting = true
     this.invalidateStatusCache()
     try {
+      // systemd-managed gateway: a single `systemctl restart` is atomic.
+      if (this.hasSystemdUnit()) {
+        this.runSystemctl('restart')
+        const restarted = await this.waitForState('running')
+        if (restarted.state !== 'running') {
+          throw new Error(`OpenClaw failed to restart. Check: journalctl -u ${GATEWAY_UNIT} -n 50`)
+        }
+        this.invalidateStatusCache()
+        return
+      }
+
       // Try CLI restart first — gateway uses SIGUSR1 sentinel internally.
       try {
         await runCli(this.opts.openclawBin, ['gateway', 'restart'], { timeout: 15000 })

@@ -189,6 +189,107 @@
         </div>
       </Teleport>
 
+      <!-- 蓝信 SSO -->
+      <div class="section-card settings-section">
+        <div class="section-header">
+          <div class="section-head-row">
+            <div>
+              <h2 class="section-title">蓝信 SSO 登录</h2>
+              <p class="section-desc">
+                开启后登录页出现「蓝信登录」入口。可选对登录用户做部门 / 权限校验。
+              </p>
+            </div>
+            <span :class="['auth-status-pill', ssoForm.enabled ? 'auth-on' : 'auth-off']">
+              {{ ssoForm.enabled ? '已开启' : '未开启' }}
+            </span>
+          </div>
+        </div>
+
+        <div v-if="ssoEnvLocked.length" class="sso-env-note">
+          以下字段由环境变量覆盖，此处修改不生效：{{ ssoEnvLocked.join('、') }}
+        </div>
+
+        <label class="sso-toggle">
+          <input type="checkbox" v-model="ssoForm.enabled" :disabled="ssoLocked('enabled') || !authEnabled" />
+          <span>启用蓝信 SSO 登录</span>
+        </label>
+        <p v-if="!authEnabled" class="sso-warn">
+          ⚠ 需先在上方「登录保护」启用密码登录,蓝信 SSO 才能开启 —— 蓝信故障时由密码登录兜底,避免锁死。
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">应用编码 productCode</label>
+          <input class="form-input" v-model="ssoForm.productCode" :disabled="ssoLocked('productCode')" placeholder="ceai-license" />
+        </div>
+        <div class="form-group pw-field">
+          <label class="form-label">
+            应用密钥 secretKey
+            <span class="sso-hint">{{ ssoForm.secretKeySet ? '（已配置，留空则不修改）' : '（未配置）' }}</span>
+          </label>
+          <div class="pw-input-wrap">
+            <input
+              class="form-input"
+              :type="showSsoSecret ? 'text' : 'password'"
+              v-model="ssoForm.secretKey"
+              :disabled="ssoLocked('secretKey')"
+              :placeholder="ssoForm.secretKeySet ? '已配置，留空不修改' : '输入应用 secretKey'"
+              autocomplete="off"
+            />
+            <button type="button" class="eye-btn" @click="showSsoSecret = !showSsoSecret" tabindex="-1"><EyeIcon :off="showSsoSecret" /></button>
+          </div>
+        </div>
+
+        <label class="sso-toggle">
+          <input type="checkbox" v-model="ssoForm.orgCheckEnabled" :disabled="ssoLocked('orgCheckEnabled')" />
+          <span>组织校验 — 仅白名单部门可登录</span>
+        </label>
+        <div class="form-group" v-if="ssoForm.orgCheckEnabled">
+          <label class="form-label">允许登录的部门编号 deptNum（逗号分隔）</label>
+          <input class="form-input" v-model="ssoForm.allowedDeptNums" :disabled="ssoLocked('allowedDeptNums')" placeholder="D01, D02" />
+        </div>
+
+        <label class="sso-toggle">
+          <input type="checkbox" v-model="ssoForm.permissionCheckEnabled" :disabled="ssoLocked('permissionCheckEnabled')" />
+          <span>权限校验 — 调用户中心 permissionCheck 接口（需 secretKey）</span>
+        </label>
+        <template v-if="ssoForm.permissionCheckEnabled">
+          <div class="form-group">
+            <label class="form-label">所需权限标识 policyUids（逗号分隔，全部命中才放行）</label>
+            <input class="form-input" v-model="ssoForm.requiredPolicyUids" :disabled="ssoLocked('requiredPolicyUids')" placeholder="policy-a, policy-b" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">权限校验接口地址</label>
+            <input class="form-input" v-model="ssoForm.permissionCheckUrl" :disabled="ssoLocked('permissionCheckUrl')" />
+          </div>
+        </template>
+
+        <details class="sso-advanced">
+          <summary>高级 — 蓝信端点地址</summary>
+          <div class="form-group">
+            <label class="form-label">用户中心 baseUrl</label>
+            <input class="form-input" v-model="ssoForm.baseUrl" :disabled="ssoLocked('baseUrl')" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">登录跳转 path</label>
+            <input class="form-input" v-model="ssoForm.loginPath" :disabled="ssoLocked('loginPath')" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">tokenCheck 接口地址</label>
+            <input class="form-input" v-model="ssoForm.tokenCheckUrl" :disabled="ssoLocked('tokenCheckUrl')" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">回跳基地址 redirectBaseUrl（留空则按 nginx 头推导）</label>
+            <input class="form-input" v-model="ssoForm.redirectBaseUrl" :disabled="ssoLocked('redirectBaseUrl')" placeholder="留空自动推导" />
+          </div>
+        </details>
+
+        <div class="section-actions">
+          <button class="btn btn-primary" @click="saveSsoConfig" :disabled="saving.sso">
+            {{ saving.sso ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </div>
+
       <!-- 网络代理 -->
       <div class="section-card settings-section">
         <div class="section-header">
@@ -336,7 +437,7 @@ const form = reactive({
   npmRegistry: '',
 })
 
-const saving = reactive({ proxy: false, pw: false, enable: false })
+const saving = reactive({ proxy: false, pw: false, enable: false, sso: false })
 
 // ── Auth enable/disable ──────────────────────────────────────────────────
 const authEnabled = ref(false)
@@ -381,6 +482,11 @@ async function enableAuth() {
 }
 
 function openDisable() {
+  // 蓝信 SSO 开启时禁止关闭密码登录 —— 否则蓝信故障将无人能登入。
+  if (ssoForm.enabled) {
+    toast.error('蓝信 SSO 已开启,请先关闭蓝信 SSO 再停用密码登录')
+    return
+  }
   disableDialog.open = true
   disableDialog.password = ''
 }
@@ -407,6 +513,98 @@ async function disableAuth() {
     toast.error(e.message)
   } finally {
     disableDialog.busy = false
+  }
+}
+
+// ── 蓝信 SSO 配置 ─────────────────────────────────────────────────────────
+const ssoForm = reactive({
+  enabled: false,
+  productCode: '',
+  secretKey: '',          // 输入值;留空 = 不修改
+  secretKeySet: false,    // 后端是否已存 secretKey(明文不回传)
+  baseUrl: '',
+  loginPath: '',
+  tokenCheckUrl: '',
+  redirectBaseUrl: '',
+  permissionCheckUrl: '',
+  permissionCheckEnabled: false,
+  requiredPolicyUids: '', // UI 逗号分隔字符串
+  orgCheckEnabled: false,
+  allowedDeptNums: '',    // UI 逗号分隔字符串
+})
+const ssoEnvLocked = ref<string[]>([])
+const showSsoSecret = ref(false)
+
+function ssoLocked(key: string): boolean {
+  return ssoEnvLocked.value.includes(key)
+}
+function splitList(s: string): string[] {
+  return s.split(',').map(x => x.trim()).filter(Boolean)
+}
+
+async function loadSsoConfig() {
+  try {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    const res = await fetch(`${base}/api/sso/config`)
+    if (!res.ok) return
+    const d = await res.json().catch(() => ({}))
+    ssoForm.enabled = Boolean(d.enabled)
+    ssoForm.productCode = d.productCode ?? ''
+    ssoForm.baseUrl = d.baseUrl ?? ''
+    ssoForm.loginPath = d.loginPath ?? ''
+    ssoForm.tokenCheckUrl = d.tokenCheckUrl ?? ''
+    ssoForm.redirectBaseUrl = d.redirectBaseUrl ?? ''
+    ssoForm.permissionCheckUrl = d.permissionCheckUrl ?? ''
+    ssoForm.permissionCheckEnabled = Boolean(d.permissionCheckEnabled)
+    ssoForm.requiredPolicyUids = (d.requiredPolicyUids ?? []).join(', ')
+    ssoForm.orgCheckEnabled = Boolean(d.orgCheckEnabled)
+    ssoForm.allowedDeptNums = (d.allowedDeptNums ?? []).join(', ')
+    ssoForm.secretKeySet = Boolean(d.secretKeySet)
+    ssoForm.secretKey = ''
+    ssoEnvLocked.value = Array.isArray(d.envLocked) ? d.envLocked : []
+  } catch {}
+}
+
+async function saveSsoConfig() {
+  // 蓝信 SSO 不能作为唯一登录方式 —— 开启它必须同时启用密码登录作兜底。
+  if (ssoForm.enabled && !authEnabled.value) {
+    toast.error('请先在「登录保护」启用密码登录,再开启蓝信 SSO')
+    return
+  }
+  saving.sso = true
+  try {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    const body: Record<string, unknown> = {
+      enabled: ssoForm.enabled,
+      productCode: ssoForm.productCode,
+      baseUrl: ssoForm.baseUrl,
+      loginPath: ssoForm.loginPath,
+      tokenCheckUrl: ssoForm.tokenCheckUrl,
+      redirectBaseUrl: ssoForm.redirectBaseUrl,
+      permissionCheckUrl: ssoForm.permissionCheckUrl,
+      permissionCheckEnabled: ssoForm.permissionCheckEnabled,
+      orgCheckEnabled: ssoForm.orgCheckEnabled,
+      requiredPolicyUids: splitList(ssoForm.requiredPolicyUids),
+      allowedDeptNums: splitList(ssoForm.allowedDeptNums),
+    }
+    // secretKey 留空 = 不修改,不发送。
+    if (ssoForm.secretKey) body.secretKey = ssoForm.secretKey
+    const res = await fetch(`${base}/api/sso/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (res.ok) {
+      toast.success('蓝信 SSO 配置已保存')
+      await loadSsoConfig()
+    } else {
+      const data = await res.json().catch(() => ({}))
+      toast.error(data.error || '保存失败')
+    }
+  } catch (e: any) {
+    toast.error(e.message)
+  } finally {
+    saving.sso = false
   }
 }
 
@@ -495,6 +693,7 @@ onMounted(async () => {
   await loadSettings()
   void refreshBackupManifest()
   void refreshAuthStatus()
+  void loadSsoConfig()
   void loadOverview()
 })
 </script>
@@ -512,6 +711,44 @@ onMounted(async () => {
 }
 .auth-on  { background: var(--success-bg); color: var(--success-text); }
 .auth-off { background: var(--muted-bg);   color: var(--text-muted); }
+
+/* ── 蓝信 SSO ─────────────────────────────────────────────────── */
+.sso-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 12px 0;
+  cursor: pointer;
+}
+.sso-toggle input { width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
+.sso-hint { font-weight: 400; font-size: 11px; color: var(--text-muted); }
+.sso-env-note {
+  font-size: 11px;
+  color: color-mix(in srgb, #f59e0b 85%, var(--text-secondary));
+  background: color-mix(in srgb, #f59e0b 8%, transparent);
+  border-left: 3px solid #f59e0b;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+.sso-warn {
+  font-size: 12px;
+  color: color-mix(in srgb, #f59e0b 88%, var(--text-secondary));
+  background: color-mix(in srgb, #f59e0b 9%, transparent);
+  border-left: 3px solid #f59e0b;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 0 0 12px;
+}
+.sso-advanced { margin: 12px 0; }
+.sso-advanced summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 0;
+}
 
 /* ── Backup panel ─────────────────────────────────────────────── */
 .backup-summary { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }

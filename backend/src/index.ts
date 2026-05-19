@@ -29,6 +29,7 @@ import { settingsRoutes } from './routes/settings.js'
 import { gatewayRoutes } from './routes/gateway.js'
 import { configEditorRoutes } from './routes/config-editor.js'
 import { cronRoutes } from './routes/cron.js'
+import { dreamingRoutes } from './routes/dreaming.js'
 import { commandLogRoutes } from './routes/command-log.js'
 import { filesRoutes } from './routes/files.js'
 import { sessionsRoutes } from './routes/sessions.js'
@@ -44,11 +45,14 @@ import { notificationsRoutes } from './routes/notifications.js'
 import { healthRoutes } from './routes/health.js'
 import { envcheckRoutes } from './routes/envcheck.js'
 import { operatorOverviewRoutes } from './routes/operator-overview.js'
+import { upgradeRoutes } from './routes/upgrade.js'
+import { UpgradeManager } from './services/upgrade-manager.js'
 import { patchGatewayAccess, getGatewayRpc } from './services/gateway-rpc.js'
 import { SettingsManager } from './services/settings-manager.js'
 import { AuthService } from './services/auth.js'
+import { SsoService } from './services/sso.js'
 import { recordRequest } from './services/request-log.js'
-import { authRoutes, authGuard } from './routes/auth.js'
+import { authRoutes, authGuard, COOKIE_NAME } from './routes/auth.js'
 import fastifyCookie from '@fastify/cookie'
 import { join } from 'path'
 
@@ -59,14 +63,27 @@ const configManager = new ConfigManager(configPath)
 const processManager = new ProcessManager({ openclawBin: config.openclawBin, gatewayPort: config.gatewayPort, openclawHome: config.openclawHome })
 const skillManager = new SkillManager(config.openclawHome)
 const pluginManager = new PluginManager(config.openclawHome, config.openclawBin)
-const channelManager = new ChannelManager(configPath, config.openclawBin)
+const channelManager = new ChannelManager(configPath, config.openclawBin, processManager)
 const usageTracker = new UsageTracker(config.openclawHome)
 const diagnosis = new DiagnosisService(configManager, config.openclawBin, config.openclawHome, config.gatewayPort)
 const broadcaster = new StatusBroadcaster()
 const settingsManager = new SettingsManager(settingsPath)
 const authService = new AuthService(config.openclawHome)
 await authService.init()
+const ssoService = new SsoService(config.openclawHome)
+await ssoService.init()
 const auditLog = new AuditLog(config.openclawHome)
+const upgradeManager = new UpgradeManager({
+  backendDir: config.portalBackendDir,
+  frontendDir: config.frontendDist,
+  stagingDir: config.portalStagingDir,
+  portalPort: config.portalPort,
+})
+// Surface the previous web-upgrade outcome in the log on boot — the apply
+// transient unit may have restarted the portal as its final step.
+upgradeManager.readResult().then(r => {
+  if (r) console.log(`[portal] 上次门户升级结果: ${r.ok ? '成功' : '失败'} (${r.action ?? ''} ${r.type ?? ''}) ${r.message ?? ''}`)
+}).catch(() => {})
 const activityStream = new ActivityStream()
 activityStream.attach(getGatewayRpc(config.gatewayPort, config.openclawHome, config.portalPort))
 
@@ -105,9 +122,9 @@ app.addHook('onRoute', (routeOptions) => {
 })
 
 // Auth routes (login/logout/check/change-password) — must be before auth guard
-await authRoutes(app, authService)
+await authRoutes(app, authService, ssoService, auditLog)
 // Auth guard — blocks unauthenticated API requests (except /api/auth/*)
-app.addHook('onRequest', authGuard(authService))
+app.addHook('onRequest', authGuard(authService, ssoService))
 
 // Request log middleware (only track /api/* calls, skip WS and static)
 app.addHook('onResponse', (req, reply, done) => {
@@ -122,9 +139,13 @@ app.addHook('onResponse', (req, reply, done) => {
     // Audit trail: only record state-changing operations matching a declared rule
     const rule = matchAuditRule(req.method, req.url)
     if (rule) {
+      // Attribute the operation to the real logged-in user via the server-side
+      // session map. Falls back to 'admin' when the session record is missing
+      // (password mode = single shared identity; or map lost on restart).
+      const actor = authService.getSession(req.cookies?.[COOKIE_NAME] ?? '')?.user ?? 'admin'
       auditLog.record({
         ts: Date.now(),
-        actor: 'admin',
+        actor,
         action: rule.action,
         target: rule.target,
         method: req.method,
@@ -163,6 +184,7 @@ await settingsRoutes(app, settingsManager)
 await gatewayRoutes(app, configManager, config.openclawBin, config.gatewayPort, config.openclawHome, config.portalPort)
 await configEditorRoutes(app, configPath, config.openclawHome)
 await cronRoutes(app, config.gatewayPort, config.openclawHome, config.portalPort)
+await dreamingRoutes(app, config.gatewayPort, config.openclawHome, config.portalPort, processManager)
 await commandLogRoutes(app)
 await filesRoutes(app)
 await sessionsRoutes(app, config.openclawHome)
@@ -175,6 +197,7 @@ await notificationsRoutes(app, auditLog, processManager, config.openclawHome)
 await healthRoutes(app, processManager, configManager, auditLog, config.openclawHome)
 await envcheckRoutes(app, processManager, settingsManager, config.openclawHome, config.openclawBin, config.gatewayPort, config.portalPort)
 await operatorOverviewRoutes(app, channelManager, authService, config.openclawBin, config.openclawHome, config.gatewayPort, config.portalPort)
+await upgradeRoutes(app, upgradeManager)
 
 // WebSocket endpoint for real-time service status
 app.get('/api/ws', { websocket: true }, (socket) => {

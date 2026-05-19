@@ -3,6 +3,8 @@
  * Keyed by sessionKey (matches gateway session key).
  */
 
+import type { ToolStep } from './chat-tools.js'
+
 const DB_NAME = 'openclaw-portal-messages'
 const DB_VERSION = 1
 const STORE_MESSAGES = 'messages'
@@ -32,6 +34,7 @@ export interface StoredMessage {
   role: 'user' | 'assistant'
   text: string
   reasoning?: string
+  steps?: ToolStep[]
   createdAt: number
 }
 

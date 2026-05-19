@@ -11,6 +11,7 @@ import { spawnSync } from 'child_process'
 
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
 const AGENT_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/
+const CATEGORY_RE = /^[a-z_]{1,32}$/
 
 export async function skillsRoutes(
   app: FastifyInstance,
@@ -33,9 +34,12 @@ export async function skillsRoutes(
   })
 
   // List registry skills from all configured sources
-  app.get<{ Querystring: { q?: string; sourceId?: string } }>('/api/skills/registry', async (req) => {
+  app.get<{ Querystring: { q?: string; sourceId?: string; category?: string; page?: string } }>('/api/skills/registry', async (req) => {
     const settings = await settingsManager.read()
-    return skillManager.listRegistry(settings.skillRegistrySources, req.query.q ?? '', req.query.sourceId)
+    // Whitelist the category token before it reaches an upstream API query.
+    const category = CATEGORY_RE.test(req.query.category ?? '') ? req.query.category! : ''
+    const page = Math.min(Math.max(parseInt(req.query.page ?? '1', 10) || 1, 1), 1000)
+    return skillManager.listRegistry(settings.skillRegistrySources, req.query.q ?? '', req.query.sourceId, category, page)
   })
 
   // Deploy a built-in registry skill to an agent workspace
@@ -79,8 +83,8 @@ export async function skillsRoutes(
       if (!sourceUrl) return reply.status(400).send({ error: 'sourceUrl required' })
       if (agent && !AGENT_NAME_RE.test(agent)) return reply.status(400).send({ error: 'invalid agent name' })
       try {
-        const skill = sourceType === 'skillhub'
-          ? await skillManager.installFromSkillHub(slug, agent ?? null)
+        const skill = sourceType === 'safeskill'
+          ? await skillManager.installFromSafeSkill(slug, agent ?? null)
           : await skillManager.installFromClawHub(slug, sourceUrl, agent ?? null)
         return skill
       } catch (err: any) {
@@ -108,6 +112,22 @@ export async function skillsRoutes(
       if (!SKILL_NAME_RE.test(req.params.name)) return reply.status(400).send({ error: 'invalid skill name' })
       await skillManager.enableSkill(req.params.name, agent)
       return { ok: true }
+    }
+  )
+
+  // Permanently delete an installed skill (agent omitted = global skill)
+  app.post<{ Params: { name: string }; Body: { agent?: string } }>(
+    '/api/skills/:name/delete',
+    async (req, reply) => {
+      const { agent } = req.body
+      if (agent && !AGENT_NAME_RE.test(agent)) return reply.status(400).send({ error: 'invalid agent name' })
+      if (!SKILL_NAME_RE.test(req.params.name)) return reply.status(400).send({ error: 'invalid skill name' })
+      try {
+        await skillManager.deleteSkill(req.params.name, agent ?? null)
+        return { ok: true }
+      } catch (err: any) {
+        return reply.status(400).send({ error: err.message })
+      }
     }
   )
 

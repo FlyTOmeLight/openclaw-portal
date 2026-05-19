@@ -3,7 +3,6 @@ import { readFile, writeFile, unlink, rename, mkdir, stat } from 'fs/promises'
 import { readdirSync, statSync, existsSync, createReadStream } from 'fs'
 import { join, resolve, basename, dirname } from 'path'
 import { homedir } from 'os'
-import { pipeline } from 'stream/promises'
 
 const ROOT = homedir()
 
@@ -83,10 +82,10 @@ export async function filesRoutes(app: FastifyInstance) {
     if (!abs) return reply.status(400).send({ error: 'Invalid path' })
     if (!existsSync(abs)) return reply.status(404).send({ error: 'Not found' })
     const name = basename(abs)
-    reply.header('Content-Disposition', `attachment; filename="${name}"`)
+    const encoded = encodeURIComponent(name)
+    reply.header('Content-Disposition', `attachment; filename="${name}"; filename*=UTF-8''${encoded}`)
     reply.header('Content-Type', 'application/octet-stream')
-    const stream = createReadStream(abs)
-    await pipeline(stream, reply.raw)
+    return reply.send(createReadStream(abs))
   })
 
   // POST /api/files/write  — body: { path, content }

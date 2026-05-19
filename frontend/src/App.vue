@@ -39,6 +39,10 @@
           <span>聊天</span>
           <small>与 Agent 对话</small>
         </RouterLink>
+        <RouterLink to="/files" class="nav-link">
+          <span>文件管理</span>
+          <small>浏览服务器文件</small>
+        </RouterLink>
         <RouterLink to="/history" class="nav-link">
           <span>对话历史</span>
           <small>历史会话 · 实时活动</small>
@@ -73,6 +77,10 @@
           <span>记忆</span>
           <small>全局指令</small>
         </RouterLink>
+        <RouterLink to="/dreaming" class="nav-link">
+          <span>梦境模式</span>
+          <small>记忆固化</small>
+        </RouterLink>
         <RouterLink to="/cron" class="nav-link">
           <span>定时任务</span>
           <small>调度器</small>
@@ -101,9 +109,13 @@
           <span>网关 & 配置</span>
           <small>端口 · JSON 编辑器</small>
         </RouterLink>
-        <RouterLink to="/tools" class="nav-link">
-          <span>系统工具</span>
-          <small>终端 · 文件</small>
+        <RouterLink to="/terminal" class="nav-link">
+          <span>命令终端</span>
+          <small>PTY 终端</small>
+        </RouterLink>
+        <RouterLink to="/upgrade" class="nav-link">
+          <span>门户升级</span>
+          <small>上传新版 · 在线升级</small>
         </RouterLink>
       </div>
 
@@ -140,6 +152,7 @@
 
   <ToastContainer />
   <CommandPalette />
+  <ConfirmDialogHost />
   </n-notification-provider>
   </n-message-provider>
   </n-config-provider>
@@ -152,6 +165,7 @@ import { NConfigProvider, NMessageProvider, NNotificationProvider, darkTheme } f
 import { useThemeStore } from './stores/theme.js'
 import ToastContainer from './components/ToastContainer.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import ConfirmDialogHost from './components/ConfirmDialogHost.vue'
 import NotificationBell from './components/NotificationBell.vue'
 import { useServiceStore } from './stores/service.js'
 import { clearAuthCache } from './router/auth-cache.js'
@@ -221,30 +235,30 @@ const themeOverrides = {
   overflow: hidden;
 }
 
-/* ── Dark Sidebar ── */
+/* ── Sidebar (theme-aware via --sidebar-* tokens) ── */
 .sidebar {
-  background:
-    linear-gradient(180deg, #1e1b3a 0%, #18181b 40%, #111113 100%);
+  background: var(--sidebar-bg);
   padding: 20px 14px 14px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  scrollbar-color: var(--sidebar-scrollbar) transparent;
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: var(--sidebar-shadow);
+  z-index: 1;
 }
 
-/* ── Brand (dark variant) ── */
+/* ── Brand ── */
 .brand {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--sidebar-brand-border);
   border-radius: var(--radius-lg);
   padding: 16px;
   margin-bottom: 8px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
-    radial-gradient(circle at 80% 10%, rgba(99, 102, 241, 0.08), transparent 56%);
+  background: var(--sidebar-brand-bg);
 }
 .brand-bar {
   display: flex;
@@ -255,14 +269,14 @@ const themeOverrides = {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid rgba(99, 102, 241, 0.35);
+  border: 1px solid var(--sidebar-kicker-border);
   border-radius: var(--radius-full);
   padding: 3px 9px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.07em;
-  color: #c7d2fe;
-  background: rgba(99, 102, 241, 0.15);
+  color: var(--sidebar-kicker-text);
+  background: var(--sidebar-kicker-bg);
   text-transform: uppercase;
 }
 .brand-dot {
@@ -270,7 +284,7 @@ const themeOverrides = {
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--sidebar-dot-idle);
   transition: background .3s;
 }
 .brand-dot.running {
@@ -280,18 +294,18 @@ const themeOverrides = {
 }
 .brand-dot.error      { background: #f87171; box-shadow: 0 0 6px rgba(248, 113, 113, 0.4); }
 .brand-dot.restarting { background: #fbbf24; box-shadow: 0 0 8px rgba(251, 191, 36, 0.5); animation: pulse-dot 0.8s ease-in-out infinite; }
-.brand-dot.stopped    { background: rgba(255, 255, 255, 0.3); }
+.brand-dot.stopped    { background: var(--sidebar-dot-idle); }
 .brand-title {
   font-size: 20px;
   font-weight: 720;
-  color: #fff;
+  color: var(--sidebar-brand-title);
   letter-spacing: -0.03em;
   margin-top: 8px;
   line-height: 1.1;
 }
 .brand-meta {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--sidebar-brand-meta);
   margin-top: 4px;
   line-height: 1.4;
 }
@@ -315,7 +329,7 @@ const themeOverrides = {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.28);
+  color: var(--sidebar-label);
   padding: 16px 12px 6px;
 }
 .nav-group-label:first-child {
@@ -333,52 +347,52 @@ const themeOverrides = {
   position: relative;
 }
 .nav-link:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--sidebar-hover-bg);
 }
 .nav-link span {
   display: block;
   font-size: 13.5px;
   font-weight: 580;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--sidebar-text);
   line-height: 1.3;
   transition: color 160ms ease;
 }
 .nav-link small {
   display: block;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--sidebar-dim);
   margin-top: 2px;
   line-height: 1.3;
   transition: color 160ms ease;
 }
 .nav-link:hover span {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--sidebar-text-hover);
 }
 .nav-link:hover small {
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--sidebar-dim-hover);
 }
 
 /* ── Active nav state ── */
 .nav-link.router-link-active,
 .nav-link.active {
-  background: rgba(99, 102, 241, 0.12);
-  box-shadow: inset 3px 0 0 #818cf8;
+  background: var(--sidebar-active-bg);
+  box-shadow: inset 3px 0 0 var(--sidebar-active-bar);
 }
 .nav-link.router-link-active span,
 .nav-link.active span {
-  color: #c7d2fe;
+  color: var(--sidebar-active-text);
   font-weight: 640;
 }
 .nav-link.router-link-active small,
 .nav-link.active small {
-  color: rgba(129, 140, 248, 0.6);
+  color: var(--sidebar-active-dim);
 }
 
 /* ── Footer ── */
 .sidebar-footer {
   padding-top: 12px;
   margin-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--sidebar-border);
 }
 .logout-btn {
   display: block;
@@ -388,25 +402,25 @@ const themeOverrides = {
   font-size: 13px;
   font-family: inherit;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--sidebar-text);
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--sidebar-icon-border);
   border-radius: var(--radius);
   cursor: pointer;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
 }
 .logout-btn:hover {
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--sidebar-text-hover);
+  background: var(--sidebar-hover-bg);
+  border-color: var(--sidebar-icon-border);
 }
 .icon-btn-footer {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--sidebar-icon-border);
   border-radius: 6px;
   padding: 4px 6px;
   cursor: pointer;
-  color: rgba(255,255,255,0.55);
+  color: var(--sidebar-icon);
   transition: background 0.12s, color 0.12s, border-color 0.12s;
   display: inline-flex;
   align-items: center;
@@ -414,9 +428,9 @@ const themeOverrides = {
   text-decoration: none;
 }
 .icon-btn-footer:hover {
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.9);
-  border-color: rgba(255,255,255,0.18);
+  background: var(--sidebar-icon-hover-bg);
+  color: var(--sidebar-icon-hover);
+  border-color: var(--sidebar-icon-border);
 }
 .icon-btn-footer + .icon-btn-footer { margin-left: 4px; }
 .icon-btn-footer + .sidebar-version { margin-left: 8px; }
@@ -432,7 +446,7 @@ const themeOverrides = {
 .sidebar-version {
   font-size: 10px;
   font-family: var(--font-mono);
-  color: rgba(255, 255, 255, 0.22);
+  color: var(--sidebar-version);
   letter-spacing: .05em;
 }
 
@@ -466,15 +480,16 @@ const themeOverrides = {
   height: 40px;
   border: none;
   border-radius: var(--radius);
-  background: #1e1b3a;
-  color: rgba(255,255,255,0.8);
+  background: var(--sidebar-toggle-bg);
+  color: var(--sidebar-toggle-fg);
   cursor: pointer;
   align-items: center;
   justify-content: center;
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   transition: background 160ms ease;
+  border: 1px solid var(--sidebar-border);
 }
-.sidebar-toggle:hover { background: #28274a; }
+.sidebar-toggle:hover { background: var(--sidebar-toggle-hover); }
 
 .sidebar-backdrop {
   display: none;
@@ -504,7 +519,7 @@ const themeOverrides = {
     z-index: 300;
     transform: translateX(-100%);
     transition: transform 280ms var(--ease-out);
-    border-right: 1px solid rgba(255,255,255,0.06);
+    border-right: 1px solid var(--sidebar-border);
     border-radius: 0;
   }
 

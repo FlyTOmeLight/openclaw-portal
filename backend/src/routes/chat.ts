@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { WebSocket } from 'ws'
-import { getOrCreateDeviceKey, buildConnectFrame, buildGatewayAuthHeaders, getGatewayAuthToken, getGatewayRpc, sanitizeUser } from '../services/gateway-rpc.js'
-import { gatewayHttpBase, gatewayWsBase, portalHttpBase } from '../config.js'
+import { getOrCreateDeviceKey, buildConnectFrame, buildGatewayAuthHeaders, getGatewayAuthToken, getGatewayRpc } from '../services/gateway-rpc.js'
+import { gatewayHttpBase, gatewayWsBase } from '../config.js'
 import type { UsageTracker } from '../services/usage-tracker.js'
 import { join, extname } from 'path'
 import { mkdir, writeFile } from 'fs/promises'
@@ -235,12 +235,12 @@ export async function chatRoutes(
       return
     }
 
-    const origin = portalHttpBase(portalPort)
+    // Trusted shared-secret loopback client: gateway token on the WS URL, and
+    // NO origin / x-forwarded-user headers. Forwarded/Origin headers disqualify
+    // the gateway's shared-secret-loopback path and force device-pairing
+    // approval (deadlock). Header-free → gateway silently auto-pairs.
     const tokenQuery = gatewayToken ? `?token=${encodeURIComponent(gatewayToken)}` : ''
-    const forwardedUser = sanitizeUser(req?.headers?.['x-forwarded-user'])
-    const gws = new WebSocket(`${gatewayWsBase(gatewayPort)}/ws${tokenQuery}`, {
-      headers: { origin, 'x-forwarded-user': forwardedUser },
-    })
+    const gws = new WebSocket(`${gatewayWsBase(gatewayPort)}/ws${tokenQuery}`)
 
     let authenticated = false
     const pending: string[] = []

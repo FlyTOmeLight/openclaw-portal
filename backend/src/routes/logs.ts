@@ -93,6 +93,18 @@ function levelFromAnsi(raw: string): LogEntry['level'] {
   return 'info'
 }
 
+// Detect an explicit textual level tag like "[INFO]" / "[ERROR]" embedded in
+// the line. Subprocess (channel/bot) output is forwarded with red (error) ANSI
+// regardless of its real severity, so the tag the process wrote itself is more
+// trustworthy than the color. Returns null when no tag is present.
+const TEXT_LEVEL_RE = /\[(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]/i
+function levelFromTag(clean: string): LogEntry['level'] | null {
+  const m = clean.match(TEXT_LEVEL_RE)
+  if (!m) return null
+  const tag = m[1].toUpperCase()
+  return tag === 'WARNING' ? 'warn' : (tag.toLowerCase() as LogEntry['level'])
+}
+
 function parseLine(raw: string): LogEntry {
   // Try JSON first (pino format)
   try {
@@ -108,8 +120,9 @@ function parseLine(raw: string): LogEntry {
   } catch {}
 
   // OpenClaw plain-text log with ANSI codes
-  const level = levelFromAnsi(raw)
   const clean = raw.replace(ANSI_RE, '')
+  // Explicit textual tag wins over ANSI color (see levelFromTag).
+  const level = levelFromTag(clean) ?? levelFromAnsi(raw)
 
   // Extract ISO timestamp at start
   const tsMatch = clean.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+[+\-]\d{2}:\d{2})/)

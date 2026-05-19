@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtemp, rm, mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -31,6 +31,7 @@ describe('SkillManager', () => {
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true })
+    vi.unstubAllGlobals()
   })
 
   it('listSkills() returns skills from global and all workspace dirs', async () => {
@@ -66,5 +67,93 @@ describe('SkillManager', () => {
     const skills = await manager.listSkills()
     const stock = skills.find(s => s.name === 'alphaear-stock')!
     expect(stock.enabled).toBe(true)
+  })
+
+  const safeskillSource = {
+    id: 'safeskill',
+    name: 'SafeSkill',
+    type: 'remote' as const,
+    url: 'https://safeskill.cn',
+  }
+
+  it('listRegistry() maps SafeSkill API items to RegistrySkill', async () => {
+    const fakeJson = {
+      code: 0,
+      data: {
+        items: [
+          {
+            name: 'find-skills',
+            space: 'vercel-labs/skills',
+            summary: 'find-skills',
+            trust_score: 90,
+            stats: { total_installs: 1384810 },
+            category: { field: 'productivity' },
+          },
+          {
+            name: 'frontend-design',
+            space: 'anthropics/skills',
+            description: 'Create distinctive frontend interfaces',
+            summary: 'frontend-design',
+            trust_score: 88,
+            stats: { total_installs: 320983 },
+            category: { field: 'development' },
+          },
+        ],
+      },
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(fakeJson), { status: 200 })))
+    const skills = await manager.listRegistry([safeskillSource])
+    expect(skills).toHaveLength(2)
+
+    const fs = skills.find(s => s.name === 'find-skills')!
+    expect(fs.slug).toBe('vercel-labs/skills/find-skills')
+    expect(fs.sourceType).toBe('safeskill')
+    expect(fs.trustScore).toBe(90)
+    expect(fs.category).toBe('productivity')
+    expect(fs.installs).toBe(1384810)
+    expect(fs.description).toBe('find-skills') // summary fallback when description missing
+
+    const fd = skills.find(s => s.name === 'frontend-design')!
+    expect(fd.description).toBe('Create distinctive frontend interfaces') // description preferred
+  })
+
+  it('listRegistry() passes category filter to the SafeSkill API', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await manager.listRegistry([safeskillSource], '', undefined, 'development')
+    const calledUrl = String(fetchMock.mock.calls[0][0])
+    expect(calledUrl).toContain('category=development')
+    expect(calledUrl).toContain('/web/v1/hub/skills/search')
+  })
+
+  it('listRegistry() passes the page number to the SafeSkill API', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await manager.listRegistry([safeskillSource], '', undefined, '', 3)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('page=3')
+  })
+
+  it('listRegistry() passes a base64 marker to ClawHub for page > 1', async () => {
+    const clawSource = { id: 'clawhub-cn', name: 'ClawHub', type: 'remote' as const, url: 'https://cn.clawhub-mirror.com' }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ results: [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await manager.listRegistry([clawSource], '', undefined, '', 2)
+    const marker = new URL(String(fetchMock.mock.calls[0][0])).searchParams.get('marker')
+    expect(marker).toBeTruthy()
+    expect(JSON.parse(Buffer.from(marker!, 'base64').toString())).toEqual({ offset: 30, limit: 30 })
+  })
+
+  it('listRegistry() returns empty list when SafeSkill API fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('bad gateway', { status: 502 })))
+    const skills = await manager.listRegistry([safeskillSource])
+    expect(skills).toEqual([])
+  })
+
+  it('installFromSafeSkill() rejects slug with a leading dash', async () => {
+    await expect(manager.installFromSafeSkill('-rf', null)).rejects.toThrow('Invalid slug')
+  })
+
+  it('installFromSafeSkill() rejects slug with illegal characters', async () => {
+    await expect(manager.installFromSafeSkill('foo;rm -rf', null)).rejects.toThrow('Invalid slug')
   })
 })

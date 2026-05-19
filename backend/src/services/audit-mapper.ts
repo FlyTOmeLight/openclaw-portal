@@ -62,6 +62,10 @@ const RULES: Rule[] = [
 
   // Settings
   { methods: ['PUT', 'POST'], pattern: /^\/api\/settings/,                     action: 'settings.update' },
+
+  // Portal web self-upgrade (rollback rule first — it is the more specific path)
+  { methods: ['POST'],   pattern: /^\/api\/system\/upgrade\/rollback/,         action: 'portal.rollback' },
+  { methods: ['POST'],   pattern: /^\/api\/system\/upgrade(?:\?|$)/,           action: 'portal.upgrade' },
 ]
 
 export function matchAuditRule(method: string, url: string): { action: string; target?: string } | null {

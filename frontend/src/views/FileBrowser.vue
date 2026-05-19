@@ -154,15 +154,15 @@
             <div class="file-actions" @click.stop>
               <button v-if="item.type === 'file'" class="fa-btn" title="查看 / 编辑" @click="openFile(item)">
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="6" cy="6" r="1.5" stroke="currentColor" stroke-width="1.2"/></svg>
-                查看
+              </button>
+              <button v-if="item.type === 'file'" class="fa-btn" title="下载到本地" @click="downloadFile(item)">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1.5v6M3.5 5.5L6 8l2.5-2.5M2 10.5h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               <button class="fa-btn" title="重命名" @click="startRename(item)">
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 10h2.5L10 4.5 7.5 2 2 7.5V10zM7.5 2l2.5 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                重命名
               </button>
               <button class="fa-btn fa-btn-danger" title="删除" @click="deleteItem(item)">
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 3.5h8M4.5 3.5V2.5h3v1M5 5.5v3.5M7 5.5v3.5M2.5 3.5l.5 7h6l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                删除
               </button>
             </div>
           </div>
@@ -205,6 +205,7 @@
           </div>
           <div class="ui-modal-footer">
             <button class="modal-btn" @click="previewModal.show = false">取消</button>
+            <button class="modal-btn" @click="downloadFile(previewModal)">下载到本地</button>
             <button class="modal-btn modal-btn-primary" @click="savePreview" :disabled="previewModal.saving">
               {{ previewModal.saving ? '保存中…' : '保存文件' }}
             </button>
@@ -275,6 +276,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { useConfirm } from '../composables/useConfirm.js'
+
+const route = useRoute()
+const confirm = useConfirm()
 
 const API_BASE = (import.meta.env.BASE_URL.replace(/\/$/, '') + '/api').replace(/\/{2,}/g, '/')
 
@@ -336,7 +342,10 @@ async function load(path: string) {
 }
 
 function navigate(path: string) { searchQuery.value = ''; load(path) }
-onMounted(() => load('/.openclaw'))
+onMounted(() => {
+  const qp = route.query.path
+  load(typeof qp === 'string' && qp ? qp : '/.openclaw')
+})
 
 // ── File type helpers ────────────────────────────────────────────────────────
 
@@ -399,9 +408,35 @@ const BINARY_EXTS = /\.(png|jpg|jpeg|gif|webp|svg|ico|bmp|tiff|mp4|mp3|mov|avi|p
 
 const previewModal = ref({ show: false, loading: false, saving: false, name: '', path: '', content: '' })
 
+async function downloadFile(item: { name: string; path: string }) {
+  const url = `${API_BASE}/files/download?path=${encodeURIComponent(item.path)}`
+  // Chromium + secure context: let the user pick the target folder & name.
+  if ('showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({ suggestedName: item.name })
+      const res = await fetch(url)
+      if (!res.ok || !res.body) throw new Error(`下载失败: ${res.status}`)
+      const writable = await handle.createWritable()
+      await res.body.pipeTo(writable)
+      return
+    } catch (e: any) {
+      // User cancelled the picker — abort silently, do not fall back.
+      if (e?.name === 'AbortError') return
+      // Any other failure — fall through to the <a download> path.
+    }
+  }
+  // Fallback: browser default download directory.
+  const a = document.createElement('a')
+  a.href = url
+  a.download = item.name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 async function openFile(item: FileItem) {
   if (BINARY_EXTS.test(item.name)) {
-    window.open(`${API_BASE}/files/download?path=${encodeURIComponent(item.path)}`)
+    downloadFile(item)
     return
   }
   previewModal.value = { show: true, loading: true, saving: false, name: item.name, path: item.path, content: '' }
@@ -425,7 +460,7 @@ async function savePreview() {
 // ── Delete ───────────────────────────────────────────────────────────────────
 
 async function deleteItem(item: FileItem) {
-  if (!confirm(`确定删除「${item.name}」吗？此操作不可撤销。`)) return
+  if (!await confirm({ title: '删除文件', message: `确定删除「${item.name}」吗？此操作不可撤销。`, confirmText: '删除', danger: true })) return
   await apiFetch('/api/files/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -848,11 +883,8 @@ async function doMkdir() {
 .fa-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 9px;
-  font-size: 11px;
-  font-weight: 600;
-  font-family: var(--font-sans);
+  justify-content: center;
+  padding: 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--surface);

@@ -21,9 +21,61 @@
       <div class="metric-card">
         <div class="metric-label">最近结果</div>
         <div class="metric-value metric-value-copy">{{ lastActionLabel }}</div>
-        <div class="metric-meta">展示最近一次安装或卸载操作的状态</div>
+        <div class="metric-meta">{{ lastActionMeta }}</div>
       </div>
     </div>
+
+    <section class="section-card">
+      <div class="section-header">
+        <h2 class="section-title">npm 源配置</h2>
+        <p class="section-desc">插件从 npm 源安装。内网或离线环境可改为国内镜像(如淘宝源 <code>https://registry.npmmirror.com</code>)。</p>
+      </div>
+      <div class="install-row">
+        <n-input v-model:value="registryInput" placeholder="https://registry.npmmirror.com" @keyup.enter="saveRegistry" />
+        <n-button type="primary" :loading="registrySaving" :disabled="!registryInput.trim()" @click="saveRegistry">保存</n-button>
+        <n-button :loading="registryPinging" :disabled="!registryInput.trim()" @click="pingRegistry">测试连通</n-button>
+      </div>
+      <div class="registry-meta">
+        <span>当前生效:<code class="mono">{{ currentRegistry || '加载中…' }}</code></span>
+        <span v-if="registryPingResult" class="registry-ping" :class="registryPingResult.ok ? 'ok' : 'fail'">
+          {{ registryPingResult.ok ? `✓ ${registryPingResult.ms}ms` : `✗ ${registryPingResult.message}` }}
+        </span>
+      </div>
+      <div v-if="registryError" class="error-msg">{{ registryError }}</div>
+    </section>
+
+    <section class="section-card">
+      <div class="section-header">
+        <h2 class="section-title">插件搜索</h2>
+        <p class="section-desc">从当前 npm 源搜索 OpenClaw 插件并一键安装。</p>
+      </div>
+      <div class="install-row">
+        <n-input v-model:value="searchQuery" placeholder="输入关键词,如 channels、feishu" @keyup.enter="doSearch" />
+        <n-button type="primary" :loading="searchLoading" :disabled="!searchQuery.trim()" @click="doSearch">搜索</n-button>
+      </div>
+      <div v-if="searchError" class="error-msg">{{ searchError }}</div>
+      <div v-if="searchLoading" class="install-placeholder">搜索中…</div>
+      <div v-else-if="searched && searchResults.length === 0" class="install-placeholder">未找到匹配的 OpenClaw 插件。</div>
+      <div v-else-if="searchResults.length > 0" class="plugin-list">
+        <div v-for="r in searchResults" :key="r.name" class="plugin-row">
+          <div class="plugin-main">
+            <div class="plugin-name-row">
+              <div class="plugin-name">{{ r.name }}</div>
+              <n-tag size="small" round>v{{ r.version }}</n-tag>
+            </div>
+            <div class="plugin-desc">{{ r.description || '暂无描述' }}</div>
+          </div>
+          <n-button v-if="r.installed" size="small" disabled>已安装</n-button>
+          <n-button
+            v-else
+            type="primary"
+            size="small"
+            :loading="installingSpec === r.npmSpec"
+            @click="installFromSearch(r)"
+          >安装</n-button>
+        </div>
+      </div>
+    </section>
 
     <section class="section-card">
       <div class="section-header">
@@ -144,15 +196,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { NButton, NInput, NTag } from 'naive-ui'
 import { api } from '../api/client.js'
+import type { PluginSearchResult } from '../api/client.js'
 import { usePluginsStore } from '../stores/plugins.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 
 const store = usePluginsStore()
 const toast = useNaiveToast()
+const confirm = useConfirm()
 onMounted(() => store.load())
+
+// 相对时间:卡片每 30s 重算一次,避免「刚刚」长期不刷新
+const now = ref(Date.now())
+let nowTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => { nowTimer = setInterval(() => { now.value = Date.now() }, 30_000) })
+onUnmounted(() => { if (nowTimer) clearInterval(nowTimer) })
+
+function relTime(at: number, ref: number): string {
+  const s = Math.max(0, Math.floor((ref - at) / 1000))
+  if (s < 60) return '刚刚'
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  return `${Math.floor(s / 86400)} 天前`
+}
 
 // offline install
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -187,6 +256,7 @@ async function doOfflineInstall() {
     const res = await api.plugins.installOffline(offlineFile.value)
     const cmd = res.result
     offlineOutput.value = [cmd.command, cmd.stdout, cmd.stderr].filter(Boolean).join('\n\n').trim()
+    store.lastAction = { kind: 'install', pkg: offlineFile.value.name, at: Date.now() }
     await store.load()
     toast.success(`离线包 ${offlineFile.value.name} 安装成功，Gateway 正在重启以加载插件…`)
     clearOfflineFile()
@@ -202,9 +272,15 @@ const installedCount = computed(() => store.plugins.length)
 const lastActionLabel = computed(() => {
   if (store.loading) return '执行中'
   if (installError.value) return '失败'
-  if (store.lastCommand?.command?.includes('uninstall')) return '已卸载'
-  if (store.lastCommand?.command?.includes('install')) return '已安装'
+  if (store.lastAction?.kind === 'uninstall') return '已卸载'
+  if (store.lastAction?.kind === 'install') return '已安装'
   return '待执行'
+})
+const lastActionMeta = computed(() => {
+  if (store.loading) return '正在执行插件操作…'
+  const a = store.lastAction
+  if (!a) return '展示最近一次安装或卸载操作的状态'
+  return `${a.pkg} · ${relTime(a.at, now.value)}`
 })
 const commandOutput = computed(() => {
   const cmd = store.lastCommand
@@ -227,13 +303,103 @@ async function doInstall() {
 }
 
 async function uninstall(name: string) {
-  if (confirm(`确认卸载 ${name}？`)) {
-    try {
-      await store.uninstall(name)
-      toast.success(`插件 ${name} 已卸载，Gateway 正在重启…`)
-    } catch (e: any) {
-      toast.error(`卸载失败: ${e.message}`)
-    }
+  const ok = await confirm({
+    title: '卸载插件',
+    message: `确认卸载 ${name}？卸载后 Gateway 会重启以应用变更。`,
+    confirmText: '卸载',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await store.uninstall(name)
+    toast.success(`插件 ${name} 已卸载，Gateway 正在重启…`)
+  } catch (e: any) {
+    toast.error(`卸载失败: ${e.message}`)
+  }
+}
+
+// ── npm 源配置 ──
+const currentRegistry = ref('')
+const registryInput = ref('')
+const registrySaving = ref(false)
+const registryPinging = ref(false)
+const registryError = ref('')
+const registryPingResult = ref<{ ok: boolean; ms: number; message: string } | null>(null)
+
+async function loadRegistry() {
+  try {
+    const r = await api.plugins.getNpmRegistry()
+    currentRegistry.value = r.registry
+    if (!registryInput.value) registryInput.value = r.registry
+  } catch (e: any) {
+    registryError.value = e.message
+  }
+}
+onMounted(loadRegistry)
+
+async function saveRegistry() {
+  registryError.value = ''
+  registrySaving.value = true
+  try {
+    const r = await api.plugins.setNpmRegistry(registryInput.value.trim())
+    currentRegistry.value = r.registry
+    toast.success(`npm 源已切换为 ${r.registry}`)
+  } catch (e: any) {
+    registryError.value = e.message
+    toast.error(`保存失败: ${e.message}`)
+  } finally {
+    registrySaving.value = false
+  }
+}
+
+async function pingRegistry() {
+  registryError.value = ''
+  registryPingResult.value = null
+  registryPinging.value = true
+  try {
+    registryPingResult.value = await api.plugins.pingNpmRegistry(registryInput.value.trim())
+  } catch (e: any) {
+    registryPingResult.value = { ok: false, ms: 0, message: e.message }
+  } finally {
+    registryPinging.value = false
+  }
+}
+
+// ── 插件搜索 ──
+const searchQuery = ref('')
+const searchResults = ref<PluginSearchResult[]>([])
+const searchLoading = ref(false)
+const searchError = ref('')
+const searched = ref(false)
+const installingSpec = ref('')
+
+async function doSearch() {
+  const q = searchQuery.value.trim()
+  if (!q) return
+  searchError.value = ''
+  searchLoading.value = true
+  try {
+    const r = await api.plugins.search(q)
+    searchResults.value = r.results
+    searched.value = true
+  } catch (e: any) {
+    searchError.value = e.message
+    searchResults.value = []
+  } finally {
+    searchLoading.value = false
+  }
+}
+
+async function installFromSearch(r: PluginSearchResult) {
+  installingSpec.value = r.npmSpec
+  try {
+    await store.install(r.npmSpec)
+    toast.success(`插件 ${r.name} 安装成功，Gateway 正在重启以加载插件…`)
+    r.installed = true
+  } catch (e: any) {
+    toast.error(`安装失败: ${e.message}`)
+  } finally {
+    installingSpec.value = ''
   }
 }
 </script>
@@ -496,4 +662,16 @@ async function uninstall(name: string) {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+.registry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-secondary, #9aa0a6);
+}
+.registry-ping.ok { color: #3fb950; }
+.registry-ping.fail { color: #f85149; }
 </style>

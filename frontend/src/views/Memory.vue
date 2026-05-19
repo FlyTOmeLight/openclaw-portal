@@ -108,6 +108,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { api } from '../api/client.js'
 import { useToastStore } from '../stores/toast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 
 const CATEGORIES = [
   { key: 'core',    label: '核心文件', desc: 'Agent 核心配置文件，如 SOUL.md、IDENTITY.md、AGENTS.md 等' },
@@ -119,6 +120,7 @@ interface Agent { id: string; workspace: string }
 interface MemFile { path: string; name: string; category: string; sizeBytes: number; modifiedAt: string }
 
 const toast = useToastStore()
+const confirm = useConfirm()
 const agents = ref<Agent[]>([])
 const selectedAgent = ref('main')
 const selectedCategory = ref('core')
@@ -158,8 +160,8 @@ async function loadFiles() {
 }
 
 function onAgentChange() { loadFiles() }
-function onCategoryChange(cat: string) {
-  if (content.value !== originalContent.value && !confirm('有未保存修改，确认切换？')) return
+async function onCategoryChange(cat: string) {
+  if (content.value !== originalContent.value && !await confirm({ title: '未保存修改', message: '有未保存修改，确认切换？', confirmText: '切换', danger: true })) return
   selectedCategory.value = cat
   loadFiles()
 }
@@ -172,7 +174,7 @@ function resetEditor() {
 }
 
 async function selectFile(file: MemFile) {
-  if (content.value !== originalContent.value && !confirm('有未保存修改，确认放弃？')) return
+  if (content.value !== originalContent.value && !await confirm({ title: '未保存修改', message: '有未保存修改,确认放弃当前编辑?', confirmText: '放弃', danger: true })) return
   selectedPath.value = file.path
   preview.value = false
   loadingContent.value = true
@@ -212,7 +214,7 @@ async function saveFile() {
 async function deleteFile() {
   if (!selectedPath.value) return
   const name = selectedPath.value.split('/').pop()
-  if (!confirm(`确认删除「${name}」？`)) return
+  if (!await confirm({ title: '删除记忆文件', message: `确认删除「${name}」？`, confirmText: '删除', danger: true })) return
   try {
     await api.memory.deleteFile(selectedPath.value)
     toast.success(`已删除 ${name}`)

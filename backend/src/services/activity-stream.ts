@@ -28,8 +28,9 @@ export class ActivityStream {
     })
     // Eager-connect: the RPC client only opens the WebSocket on the first
     // request() call. Without a nudge, gateway events never flow through.
-    // `heartbeat` is a read-only no-op that's always safe to call.
-    ;(rpc as any).request?.('heartbeat', {}).catch(() => {})
+    // `ping` is a gateway-supported read-only no-op (`heartbeat` is not a
+    // valid gateway method and floods its log with INVALID_REQUEST).
+    ;(rpc as any).request?.('ping', {}).catch(() => {})
   }
 
   detach() {

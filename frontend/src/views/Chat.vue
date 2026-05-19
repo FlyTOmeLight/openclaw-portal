@@ -75,7 +75,41 @@
           @mouseenter="hoverMsgId = msg.id"
           @mouseleave="hoverMsgId = ''"
         >
-          <div class="msg-bubble">
+          <!-- Tool-call step cards (independent of the text bubble) -->
+          <details
+            v-for="step in msg.steps"
+            :key="step.id"
+            class="tool-step-card"
+            :open="step.status === 'running'"
+          >
+            <summary class="tool-step-summary">
+              <span class="tool-step-icon">⚡</span>
+              <span class="tool-step-name">{{ step.name }}</span>
+              <span :class="['tool-step-status', step.status]">{{ toolStatusLabel(step.status) }}</span>
+              <span v-if="step.ts" class="tool-step-time">{{ formatTime(step.ts) }}</span>
+            </summary>
+            <div class="tool-step-body">
+              <div v-if="step.input !== undefined" class="tool-step-section">
+                <div class="tool-step-section-label">入参</div>
+                <pre class="tool-step-pre">{{ formatToolValue(step.input) }}</pre>
+              </div>
+              <div v-if="step.output !== undefined" class="tool-step-section">
+                <div class="tool-step-section-label">输出</div>
+                <pre class="tool-step-pre">{{ formatToolValue(step.output) }}</pre>
+              </div>
+            </div>
+          </details>
+
+          <!-- Transient run-status indicator (compaction / fallback) -->
+          <div v-if="msg.liveStatus" :class="['live-status', { done: msg.liveStatus.done }]">
+            <span class="live-status-dot" />
+            <span>{{ msg.liveStatus.text }}</span>
+          </div>
+
+          <div
+            v-if="msg.text || msg.reasoning || msg.attachments?.length || msg.streaming || msg.usage"
+            class="msg-bubble"
+          >
             <!-- Attachments -->
             <div v-if="msg.attachments?.length" class="attachments">
               <div
@@ -254,6 +288,15 @@ import {
   clearSessionMessages,
   type StoredMessage,
 } from '../utils/message-db.js'
+import {
+  mergeToolEvent,
+  describeAgentStream,
+  extractToolStepsFromHistory,
+  toolStatusLabel,
+  formatToolValue,
+  type ToolStep,
+  type LiveStatus,
+} from '../utils/chat-tools.js'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -289,6 +332,8 @@ interface Message {
   phase?: AgentPhase
   usage?: TokenUsage
   attachments?: Attachment[]
+  steps?: ToolStep[]            // persisted tool-call step cards
+  liveStatus?: LiveStatus       // transient run indicator (not persisted)
   streaming?: boolean
   createdAt: number
 }
@@ -355,6 +400,7 @@ const chatConnectRejectors: ((e: Error) => void)[] = []
 let chatMainSessionKey = 'agent:main:main'
 const chatPendingRpcs = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
 const chatEventHandlers: Array<(payload: any) => void> = []
+const agentEventHandlers: Array<(payload: any) => void> = []
 let activeAbort: (() => void) | null = null
 
 function handleWsMessage(data: string) {
@@ -393,6 +439,10 @@ function handleWsMessage(data: string) {
 
   if (msg.type === 'event' && msg.event === 'chat') {
     for (const fn of chatEventHandlers) try { fn(msg.payload) } catch {}
+  }
+
+  if (msg.type === 'event' && msg.event === 'agent') {
+    for (const fn of agentEventHandlers) try { fn(msg.payload) } catch {}
   }
 }
 
@@ -508,7 +558,7 @@ function phaseLabel(phase?: AgentPhase): string {
   switch (phase) {
     case 'thinking': return '正在思考…'
     case 'replying': return '正在回复…'
-    default: return '发送中…'
+    default: return '思考中'
   }
 }
 
@@ -887,11 +937,20 @@ function buildWsSessionKey(agentId: string, conversationKey: string): string {
 }
 
 function msgToStored(msg: Message, sessionKey: string): StoredMessage {
-  return { id: msg.id, sessionKey, role: msg.role, text: msg.text, reasoning: msg.reasoning, createdAt: msg.createdAt }
+  return {
+    id: msg.id, sessionKey, role: msg.role, text: msg.text,
+    reasoning: msg.reasoning,
+    steps: msg.steps?.length ? msg.steps : undefined,
+    createdAt: msg.createdAt,
+  }
 }
 
 function storedToMsg(s: StoredMessage): Message {
-  return { id: s.id, role: s.role, text: s.text, reasoning: s.reasoning, phase: 'done', createdAt: s.createdAt }
+  return {
+    id: s.id, role: s.role, text: s.text, reasoning: s.reasoning,
+    steps: s.steps?.length ? s.steps : undefined,
+    phase: 'done', createdAt: s.createdAt,
+  }
 }
 
 async function loadSessionHistory(state: AgentConversationState, agentId: string) {
@@ -901,7 +960,7 @@ async function loadSessionHistory(state: AgentConversationState, agentId: string
   // 1. Show local IndexedDB messages immediately
   const local = await getLocalMessages(sessionKey)
   if (local.length && !state.messages.length) {
-    state.messages = local.map(storedToMsg).filter(m => m.text)
+    state.messages = local.map(storedToMsg).filter(m => m.text || m.steps?.length)
     await nextTick(); jumpToBottom()
   }
 
@@ -909,16 +968,27 @@ async function loadSessionHistory(state: AgentConversationState, agentId: string
   try {
     await ensureChatWs()
     const result = await chatRequest('chat.history', { sessionKey, limit: 200 })
-    const msgs: Message[] = (result?.messages ?? [])
-      .filter((m: any) => m.text)
-      .map((m: any) => ({
-        id: m.id || mkId(),
-        role: (m.role === 'tool' || m.role === 'toolResult') ? 'assistant' : (m.role ?? 'assistant'),
-        text: m.text ?? '',
-        reasoning: m.thinking,
-        phase: 'done' as AgentPhase,
-        createdAt: m.timestamp ?? Date.now(),
-      }))
+    const rawMsgs: any[] = result?.messages ?? []
+    const stepsMap = extractToolStepsFromHistory(rawMsgs)
+    // Gateway history puts text/reasoning inside content[] blocks; tool-result
+    // messages fold into their owning assistant turn's step cards, so they are
+    // not surfaced as standalone chat bubbles.
+    const msgs: Message[] = rawMsgs
+      .map((m: any, i: number) => {
+        const isTool = m.role === 'tool' || m.role === 'toolResult'
+        return {
+          id: m.id || mkId(),
+          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          text: isTool ? '' : extractGatewayText(m),
+          reasoning: extractGatewayReasoning(m) || (typeof m.thinking === 'string' ? m.thinking : undefined),
+          steps: stepsMap.get(i),
+          phase: 'done' as AgentPhase,
+          createdAt: m.timestamp ?? Date.now(),
+          _isTool: isTool,
+        }
+      })
+      .filter(m => !m._isTool && (m.text || m.steps?.length))
+      .map(({ _isTool, ...m }): Message => m)
     if (msgs.length) {
       state.messages = msgs
       await saveMessages(msgs.map(m => msgToStored(m, sessionKey)))
@@ -958,12 +1028,15 @@ async function sendViaWs(
       if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
       const idx = chatEventHandlers.indexOf(eventHandler)
       if (idx !== -1) chatEventHandlers.splice(idx, 1)
+      const aidx = agentEventHandlers.indexOf(agentHandler)
+      if (aidx !== -1) agentEventHandlers.splice(aidx, 1)
     }
 
     function finish(err?: Error) {
       if (resolved) return
       resolved = true
       cleanup()
+      assistantMsg.liveStatus = undefined   // transient — never persists
       if (err) reject(err)
       else resolve()
     }
@@ -1043,7 +1116,27 @@ async function sendViaWs(
       }
     }
 
+    // event:'agent' — tool steps (persistent) + run-status hints (transient)
+    const agentHandler = (payload: any) => {
+      if (resolved || !payload) return
+      if (payload.sessionKey && payload.sessionKey !== sessionKey) return
+      if (currentRunId && payload.runId && payload.runId !== currentRunId) return
+      if (payload.runId && !currentRunId) currentRunId = payload.runId
+      resetSafety()
+
+      if (payload.stream === 'tool') {
+        if (!assistantMsg.steps) assistantMsg.steps = []
+        mergeToolEvent(assistantMsg.steps, payload)
+        scheduleScroll()
+        return
+      }
+
+      const ls = describeAgentStream(payload)
+      if (ls) { assistantMsg.liveStatus = ls; scheduleScroll() }
+    }
+
     chatEventHandlers.push(eventHandler)
+    agentEventHandlers.push(agentHandler)
     resetSafety()
 
     chatRequest('chat.send', {
@@ -1161,13 +1254,17 @@ onMounted(async () => {
     if (resumeSessionId) {
       try {
         const detail = await api.sessions.getDetail(resumeAgentId, resumeSessionId)
+        const stepsMap = extractToolStepsFromHistory(detail.messages)
         state.messages = detail.messages
-          .filter((m): m is typeof m & { role: 'user' | 'assistant' } => Boolean(m.text) && (m.role === 'user' || m.role === 'assistant'))
-          .map(m => ({
+          .map((m, i) => ({ m, steps: stepsMap.get(i) }))
+          .filter(({ m, steps }) =>
+            (m.role === 'user' || m.role === 'assistant') && (Boolean(m.text) || Boolean(steps?.length)))
+          .map(({ m, steps }) => ({
             id: m.id,
-            role: m.role,
-            text: m.text,
+            role: m.role as 'user' | 'assistant',
+            text: m.text ?? '',
             reasoning: m.thinking || undefined,
+            steps,
             phase: 'done' as const,
             createdAt: new Date(m.timestamp).getTime() || Date.now(),
           }))
@@ -1430,6 +1527,89 @@ watch(filteredSlashCmds, (cmds) => {
   max-height: 220px;
   overflow-y: auto;
 }
+
+/* Tool-call step cards */
+.tool-step-card {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2, var(--surface));
+  max-width: 100%;
+}
+.tool-step-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  list-style: none;
+}
+.tool-step-summary::-webkit-details-marker { display: none; }
+.tool-step-icon { font-size: 13px; }
+.tool-step-name { font-family: var(--font-mono); color: var(--text-primary); }
+.tool-step-status {
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+.tool-step-status.running { color: var(--accent); background: var(--tint-strong, rgba(0,0,0,.06)); }
+.tool-step-status.ok { color: #15803d; background: rgba(34,197,94,.12); }
+.tool-step-status.error { color: #b91c1c; background: rgba(239,68,68,.12); }
+.tool-step-time { margin-left: auto; font-weight: 400; color: var(--text-muted); }
+.tool-step-body {
+  border-top: 1px solid var(--border-soft, var(--border));
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tool-step-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.tool-step-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* Transient run-status indicator */
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  background: var(--tint-strong, rgba(0,0,0,.05));
+  width: fit-content;
+}
+.live-status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot .8s ease-in-out infinite alternate;
+}
+.live-status.done { color: var(--text-secondary); }
+.live-status.done .live-status-dot { background: #22c55e; animation: none; }
 
 /* Phase indicator */
 .phase-indicator { display: flex; align-items: center; gap: 8px; padding: 6px 0 2px; }

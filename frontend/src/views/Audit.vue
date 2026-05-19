@@ -90,6 +90,7 @@
           <tr>
             <th class="col-time">时间</th>
             <th class="col-action">类型</th>
+            <th class="col-actor">操作者</th>
             <th class="col-target">目标</th>
             <th class="col-method">方法</th>
             <th class="col-status">状态</th>
@@ -105,6 +106,7 @@
             >
               <td class="col-time mono">{{ formatTime(e.ts) }}</td>
               <td class="col-action"><span class="action-chip">{{ e.action }}</span></td>
+              <td class="col-actor mono">{{ e.actor || '—' }}</td>
               <td class="col-target mono">{{ e.target || '—' }}</td>
               <td class="col-method mono">{{ e.method || '—' }}</td>
               <td class="col-status mono">{{ e.status ?? '—' }}</td>
@@ -116,9 +118,8 @@
               </td>
             </tr>
             <tr v-if="expandedIdx === i" class="detail-row">
-              <td colspan="7">
+              <td colspan="8">
                 <div class="detail-body">
-                  <div><span class="detail-k">Actor:</span> <span class="mono">{{ e.actor }}</span></div>
                   <div><span class="detail-k">URL:</span> <span class="mono">{{ e.url || '—' }}</span></div>
                   <div v-if="e.errorMessage"><span class="detail-k">Error:</span> <span class="mono err">{{ e.errorMessage }}</span></div>
                 </div>
@@ -296,6 +297,7 @@ onUnmounted(() => {
 
 .col-time  { white-space: nowrap; color: var(--text-muted); }
 .col-action { white-space: nowrap; }
+.col-actor { white-space: nowrap; font-weight: 600; color: var(--text-primary); }
 .col-target { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-method { white-space: nowrap; color: var(--text-muted); }
 .col-status { white-space: nowrap; color: var(--text-muted); }

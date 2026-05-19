@@ -9,7 +9,7 @@ import { join } from 'path'
 const BACKUP_ITEMS = [
   'openclaw.json',         // core gateway config
   'portal-auth.json',      // admin password hash (scrypt-hashed, not plaintext)
-  'portal-device-key.json',// Ed25519 device identity for gateway pairing
+  'portal-gateway-key.json',// Ed25519 device identity for the gateway connection
   'portal-settings.json',  // portal preferences
   'portal-usage.json',     // token/cost history
   'audit.log',             // audit trail

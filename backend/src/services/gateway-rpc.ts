@@ -14,15 +14,20 @@
  *  Both are required for the gateway to accept our WebSocket connection.
  */
 
-import { createHash, generateKeyPairSync, createPrivateKey, createPublicKey, sign as cryptoSign, randomUUID } from 'crypto'
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { createHash, generateKeyPairSync, createPrivateKey, sign as cryptoSign, randomUUID } from 'crypto'
+import { readFile, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { WebSocket } from 'ws'
 import { gatewayWsBase, portalHttpBase } from '../config.js'
 
 const SCOPES = ['operator.admin', 'operator.approvals', 'operator.pairing', 'operator.read', 'operator.write']
-const KEY_FILE = 'portal-device-key.json'
+// Device key for the gateway-client backend connection. A distinct filename
+// (not the legacy portal-device-key.json) guarantees a fresh deviceId, so the
+// connect does not collide with any stale paired-device entry left under the
+// old `openclaw-control-ui` client identity — which would trip the gateway's
+// "device identity changed" rejection.
+const KEY_FILE = 'portal-gateway-key.json'
 const CONNECT_TIMEOUT = 12_000
 const REQUEST_TIMEOUT = 15_000
 const PING_INTERVAL = 25_000
@@ -97,7 +102,10 @@ function buildConnectFrame(deviceKey: DeviceKey, nonce: string, gatewayToken = '
   const signedAt = Date.now()
   const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
   const scopesStr = SCOPES.join(',')
-  const payloadStr = `v3|${deviceKey.deviceId}|openclaw-control-ui|ui|operator|${scopesStr}|${signedAt}|${gatewayToken}|${nonce}|${platform}|desktop`
+  // Protocol 4 device signature payload — must match the gateway's verifier:
+  // v2|deviceId|clientId|clientMode|role|scopes|signedAt|token|nonce.
+  // clientId/clientMode here MUST match the `client` block below.
+  const payloadStr = `v2|${deviceKey.deviceId}|gateway-client|cli|operator|${scopesStr}|${signedAt}|${gatewayToken}|${nonce}`
 
   const privRaw = Buffer.from(deviceKey.privateKeyHex, 'hex')
   const pubRaw = Buffer.from(deviceKey.publicKeyB64, 'base64url')
@@ -111,8 +119,8 @@ function buildConnectFrame(deviceKey: DeviceKey, nonce: string, gatewayToken = '
   return {
     type: 'req', id, method: 'connect',
     params: {
-      minProtocol: 3, maxProtocol: 3,
-      client: { id: 'openclaw-control-ui', version: '1.0.0', platform, deviceFamily: 'desktop', mode: 'ui' },
+      minProtocol: 4, maxProtocol: 4,
+      client: { id: 'gateway-client', version: '1.0.0', platform, deviceFamily: 'server', mode: 'cli' },
       role: 'operator', scopes: SCOPES, caps: ['tool-events'],
       auth: { token: gatewayToken },
       device: { id: deviceKey.deviceId, publicKey: deviceKey.publicKeyB64, signedAt, nonce, signature: sig.toString('base64url') },
@@ -121,74 +129,15 @@ function buildConnectFrame(deviceKey: DeviceKey, nonce: string, gatewayToken = '
   }
 }
 
-// ─── CLI device auto-pairing ──────────────────────────────────────────────────
+// ─── One-time setup: register portal origin ──────────────────────────────────
 
 /**
- * Read ~/.openclaw/identity/device.json (the CLI's own device key) and
- * ensure it is registered in paired.json with full operator scopes.
- * This mirrors what clawpanel does for itself, applied to the CLI identity
- * so that child-process `openclaw` invocations don't hit "pairing required".
- */
-async function patchCliDevice(openclawHome: string): Promise<void> {
-  const identityPath = join(openclawHome, 'identity', 'device.json')
-  if (!existsSync(identityPath)) return
-
-  try {
-    const identity = JSON.parse(await readFile(identityPath, 'utf-8'))
-    const { deviceId, publicKeyPem, createdAtMs } = identity
-    if (!deviceId || !publicKeyPem) return
-
-    // Convert PEM SPKI → raw 32-byte Ed25519 public key → base64url
-    const pubKey = createPublicKey(publicKeyPem)
-    const spki = pubKey.export({ type: 'spki', format: 'der' }) as Buffer
-    const publicKeyB64 = spki.subarray(12).toString('base64url')
-
-    const devicesDir = join(openclawHome, 'devices')
-    const pairedPath = join(devicesDir, 'paired.json')
-    await mkdir(devicesDir, { recursive: true })
-
-    let paired: Record<string, any> = {}
-    try { paired = JSON.parse(await readFile(pairedPath, 'utf-8')) } catch {}
-
-    const CLI_SCOPES = [
-      'operator.admin', 'operator.approvals', 'operator.pairing',
-      'operator.read', 'operator.write', 'operator.talk.secrets',
-    ]
-    const nowMs = Date.now()
-    const existing = paired[deviceId]
-
-    // Only write if missing or scopes are incomplete
-    const existingScopes: string[] = existing?.approvedScopes ?? []
-    const needsUpdate = !existing || CLI_SCOPES.some(s => !existingScopes.includes(s)) || existing.clientMode !== 'cli'
-
-    if (needsUpdate) {
-      paired[deviceId] = {
-        deviceId,
-        publicKey: publicKeyB64,
-        platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
-        clientId: 'cli',
-        clientMode: 'cli',
-        role: 'operator',
-        roles: ['operator'],
-        scopes: CLI_SCOPES,
-        approvedScopes: CLI_SCOPES,
-        tokens: existing?.tokens ?? {},
-        createdAtMs: createdAtMs ?? existing?.createdAtMs ?? nowMs,
-        approvedAtMs: nowMs,
-      }
-      await writeFile(pairedPath, JSON.stringify(paired, null, 2), 'utf-8')
-      console.log('[gateway-rpc] CLI device auto-paired:', deviceId.slice(0, 16) + '...')
-    }
-  } catch (e) {
-    console.warn('[gateway-rpc] Failed to patch CLI device:', e)
-  }
-}
-
-// ─── One-time setup: register portal origin + device key ─────────────────────
-
-/**
- * Write the portal's origin into gateway.controlUi.allowedOrigins and
- * write the device entry into ~/.openclaw/devices/paired.json.
+ * Register the portal's origin in gateway.controlUi.allowedOrigins.
+ *
+ * The portal's own device and any child-process `openclaw` CLI both connect as
+ * header-free shared-secret loopback clients (see GatewayRpcClient._connect) and
+ * are silently auto-paired by the gateway on connect — nothing is pre-seeded
+ * into paired.json.
  *
  * Returns true if openclaw.json was modified (caller should restart gateway).
  */
@@ -222,36 +171,6 @@ export async function patchGatewayAccess(
   } catch (e) {
     console.warn('[gateway-rpc] Failed to patch allowedOrigins:', e)
   }
-
-  // 2. Write device entry to paired.json
-  try {
-    const deviceKey = await getOrCreateDeviceKey(openclawHome)
-    const devicesDir = join(openclawHome, 'devices')
-    const pairedPath = join(devicesDir, 'paired.json')
-    await mkdir(devicesDir, { recursive: true })
-
-    let paired: Record<string, any> = {}
-    try { paired = JSON.parse(await readFile(pairedPath, 'utf-8')) } catch {}
-
-    const { deviceId, publicKeyB64 } = deviceKey
-    const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
-    const nowMs = Date.now()
-
-    if (!paired[deviceId] || paired[deviceId].platform !== platform) {
-      paired[deviceId] = {
-        deviceId, publicKey: publicKeyB64, platform, deviceFamily: 'desktop',
-        clientId: 'openclaw-control-ui', clientMode: 'ui',
-        role: 'operator', roles: ['operator'], scopes: SCOPES, approvedScopes: SCOPES,
-        tokens: {}, createdAtMs: paired[deviceId]?.createdAtMs ?? nowMs, approvedAtMs: nowMs,
-      }
-      await writeFile(pairedPath, JSON.stringify(paired, null, 2), 'utf-8')
-    }
-  } catch (e) {
-    console.warn('[gateway-rpc] Failed to write paired.json:', e)
-  }
-
-  // 3. Auto-pair the CLI device so child-process openclaw calls don't need manual pairing
-  await patchCliDevice(openclawHome)
 
   return configChanged
 }
@@ -361,12 +280,14 @@ export class GatewayRpcClient {
         reject(err); this._rejectAll(err)
       }, CONNECT_TIMEOUT)
 
-      // Mirror clawpanel: pass gateway token on the WS URL, then sign connect with the same token.
-      const origin = portalHttpBase(this.portalPort)
+      // Connect as a trusted shared-secret loopback client: gateway token on the
+      // WS URL, signed connect frame with the same token, and NO origin /
+      // x-forwarded-user headers. Any forwarded-header or browser-Origin evidence
+      // disqualifies the gateway's shared-secret-loopback path and forces device
+      // pairing approval — which deadlocks (approving needs operator.approvals,
+      // which the unpaired portal lacks). Header-free → gateway silently auto-pairs.
       const tokenQuery = this.gatewayToken ? `?token=${encodeURIComponent(this.gatewayToken)}` : ''
-      const ws = new WebSocket(`${gatewayWsBase(this.gatewayPort)}/ws${tokenQuery}`, {
-        headers: { origin, 'x-forwarded-user': 'admin' },
-      })
+      const ws = new WebSocket(`${gatewayWsBase(this.gatewayPort)}/ws${tokenQuery}`)
       this.ws = ws
 
       // Fallback: if no challenge arrives, send connect frame proactively

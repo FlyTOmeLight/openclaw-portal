@@ -344,8 +344,10 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { api } from '../api/client.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
+import { useConfirm } from '../composables/useConfirm.js'
 
 const toast = useNaiveToast()
+const confirm = useConfirm()
 const router = useRouter()
 const DETAIL_PREVIEW_TAIL = 16
 
@@ -452,7 +454,7 @@ async function load() {
 }
 
 async function clearAgent(agent: { agentId: string; sessionCount: number }) {
-  if (!confirm(`确认清空 Agent "${agent.agentId}" 的所有 ${agent.sessionCount} 个会话？此操作不可撤销。`)) return
+  if (!await confirm({ title: '清空会话', message: `确认清空 Agent "${agent.agentId}" 的所有 ${agent.sessionCount} 个会话？此操作不可撤销。`, confirmText: '清空', danger: true })) return
   clearingAgent.value = agent.agentId
   try {
     const r = await api.sessions.clearAgent(agent.agentId)
