@@ -37,12 +37,42 @@
             </ul>
           </div>
 
-          <!-- 右:内容预览 -->
+          <!-- 右:内容预览 / 编辑 -->
           <div class="sfm-content">
             <div v-if="fileLoading" class="sfm-hint">加载文件内容…</div>
             <div v-else-if="!selectedFile" class="sfm-empty">← 选择左侧文件查看内容</div>
-            <div v-else-if="isMarkdown" class="sfm-md" v-html="renderedMd"></div>
-            <pre v-else class="sfm-pre">{{ selectedFile.content }}</pre>
+            <template v-else>
+              <div class="sfm-actions">
+                <span class="sfm-actions-name">{{ selectedFile.name }}</span>
+                <span v-if="dirty" class="sfm-actions-dirty">未保存</span>
+                <span v-if="saveError" class="sfm-actions-error">{{ saveError }}</span>
+                <div class="sfm-actions-spacer" />
+                <button
+                  v-if="!editing"
+                  class="btn btn-sm"
+                  :disabled="!isEditable"
+                  :title="isEditable ? '编辑当前文件' : '该文件类型不支持在线编辑'"
+                  @click="startEdit"
+                >编辑</button>
+                <template v-else>
+                  <button class="btn btn-sm" :disabled="saving" @click="cancelEdit">取消</button>
+                  <button class="btn btn-sm btn-primary" :disabled="saving || !dirty" @click="saveEdit">
+                    {{ saving ? '保存中…' : '保存' }}
+                  </button>
+                </template>
+              </div>
+
+              <textarea
+                v-if="editing"
+                v-model="draft"
+                class="sfm-edit"
+                spellcheck="false"
+                @keydown.meta.s.prevent="saveEdit"
+                @keydown.ctrl.s.prevent="saveEdit"
+              />
+              <div v-else-if="isMarkdown" class="sfm-md" v-html="renderedMd"></div>
+              <pre v-else class="sfm-pre">{{ selectedFile.content }}</pre>
+            </template>
           </div>
         </div>
       </div>
@@ -69,11 +99,70 @@ const loading = ref(false)
 const selectedFile = ref<{ name: string; content: string; path: string } | null>(null)
 const fileLoading = ref(false)
 
+// Edit state. We keep the original content on `selectedFile` and the working
+// draft on `draft`, so cancel restores cleanly without re-fetching, and the
+// dirty indicator only lights up when the user actually changed something.
+const editing = ref(false)
+const draft = ref('')
+const saving = ref(false)
+const saveError = ref('')
+
+// Whitelist of in-place-editable text file extensions. Binary files (images,
+// archives) intentionally cannot be edited through the browser textarea —
+// they'd be corrupted by the round trip through a string.
+const EDITABLE_EXT = /\.(md|markdown|txt|json|ya?ml|toml|sh|py|js|mjs|cjs|ts|tsx|css|html|conf|ini|env)$/i
+
+const isEditable = computed(() => !!selectedFile.value && EDITABLE_EXT.test(selectedFile.value.name))
+const dirty = computed(() => editing.value && selectedFile.value !== null && draft.value !== selectedFile.value.content)
+
+function startEdit() {
+  if (!selectedFile.value || !isEditable.value) return
+  draft.value = selectedFile.value.content
+  saveError.value = ''
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+  draft.value = ''
+  saveError.value = ''
+}
+
+async function saveEdit() {
+  if (!selectedFile.value || saving.value || !dirty.value) return
+  saving.value = true
+  saveError.value = ''
+  try {
+    const r = await fetch(`${API_BASE}/files/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: selectedFile.value.path, content: draft.value }),
+    })
+    const d = await r.json().catch(() => ({} as any))
+    if (!r.ok) {
+      saveError.value = d?.error || `HTTP ${r.status}`
+      return
+    }
+    selectedFile.value = { ...selectedFile.value, content: draft.value }
+    editing.value = false
+    draft.value = ''
+  } catch (e: any) {
+    saveError.value = e?.message ?? '保存失败'
+  } finally {
+    saving.value = false
+  }
+}
+
 watch(() => props.show, (v) => {
   if (v && props.skill) {
     rootPath.value = props.skill.relPath || props.skill.path || ''
     selectedFile.value = null
     items.value = []
+    // Reset edit state on (re)open so a stale draft from a previous skill
+    // can't leak into the new session.
+    editing.value = false
+    draft.value = ''
+    saveError.value = ''
     void loadDir(rootPath.value)
   }
 })
@@ -93,6 +182,14 @@ async function loadDir(path: string) {
 
 async function openItem(item: FileItem) {
   if (item.type === 'dir') { void loadDir(item.path); return }
+  // Switching files mid-edit silently discards the draft. Warn first so a
+  // long edit is not lost by an accidental click on the sidebar.
+  if (editing.value && dirty.value) {
+    if (!window.confirm('当前文件有未保存的修改,切换文件将丢弃。继续?')) return
+  }
+  editing.value = false
+  draft.value = ''
+  saveError.value = ''
   fileLoading.value = true
   try {
     const r = await fetch(`${API_BASE}/files/get?path=${encodeURIComponent(item.path)}`)
@@ -131,7 +228,12 @@ const renderedMd = computed(() => {
   return DOMPurify.sanitize(marked.parse(body) as string)
 })
 
-function close() { emit('update:show', false) }
+function close() {
+  if (editing.value && dirty.value) {
+    if (!window.confirm('有未保存的修改,关闭后将丢失。确认?')) return
+  }
+  emit('update:show', false)
+}
 </script>
 
 <style scoped>
@@ -190,6 +292,51 @@ function close() { emit('update:show', false) }
   padding: 6px;
   overflow-y: auto;
   flex: 1;
+}
+
+/* Edit action bar over the preview/edit pane */
+.sfm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2, var(--surface));
+  font-size: var(--text-xs);
+}
+.sfm-actions-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sfm-actions-dirty {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #b45309;
+}
+.sfm-actions-error {
+  color: var(--error-text);
+  font-size: 11px;
+}
+.sfm-actions-spacer { flex: 1; }
+
+.sfm-edit {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 2;
 }
 
 .sfm-item {
