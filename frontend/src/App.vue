@@ -69,10 +69,6 @@
           <span>技能</span>
           <small>技能仓库</small>
         </RouterLink>
-        <RouterLink to="/skill-health" class="nav-link">
-          <span>技能健康</span>
-          <small>依赖检测</small>
-        </RouterLink>
         <RouterLink to="/plugins" class="nav-link">
           <span>插件</span>
           <small>npm 插件</small>

@@ -74,15 +74,6 @@ export interface SkillDepsReport {
   python: DepCategoryResult
   totalMissing: number
 }
-export interface SkillHealthSummary {
-  name: string
-  agent: string | null
-  totalDeclared: number
-  totalMissing: number
-  status: 'ok' | 'missing' | 'unknown'
-  scannedAt: number
-}
-
 export interface PluginSearchResult {
   name: string
   version: string
