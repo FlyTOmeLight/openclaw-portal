@@ -6,9 +6,23 @@ import { homedir } from 'os'
 
 const ROOT = homedir()
 
+// Accept both home-relative ('/.openclaw') and home-absolute ('/root/.openclaw')
+// inputs. The frontend has historically conflated the two — when navigating
+// from a query param or symlinked subtree, currentPath can come back as the
+// full absolute path, and naive resolve(ROOT, '/root/.openclaw') becomes
+// '/root/root/.openclaw' (cause of the ENOENT 500 on /api/files/upload).
 function safePath(relOrAbs: string): string | null {
-  const abs = resolve(ROOT, relOrAbs.replace(/^\/+/, ''))
   const root = resolve(ROOT)
+  let rel = relOrAbs.replace(/^\/+/, '')
+
+  // Strip a duplicate home-prefix if the caller already prepended it.
+  const rootRel = root.replace(/^\/+/, '')
+  if (rootRel) {
+    if (rel === rootRel) rel = ''
+    else if (rel.startsWith(rootRel + '/')) rel = rel.slice(rootRel.length + 1)
+  }
+
+  const abs = resolve(ROOT, rel)
   if (abs !== root && !abs.startsWith(root + '/')) return null
   return abs
 }
