@@ -22,6 +22,10 @@ export interface SsoConfig {
   orgCheckEnabled: boolean
   /** 组织校验白名单:允许登录的部门编号(deptNum)。 */
   allowedDeptNums: string[]
+  /** UI 隐藏开关。true 时 portal 前端不展示蓝信 SSO 配置区块与登录按钮,
+   * 后端 isEnabled() 视同关闭,/api/auth/sso/* 路由 404。
+   * 仅由环境变量 PORTAL_SSO_HIDDEN 控制,不持久化到 portal-sso.json。 */
+  hidden: boolean
 }
 
 /** tokenCheck 返回的登录用户信息(取所需字段)。 */
@@ -45,6 +49,7 @@ const DEFAULTS: SsoConfig = {
   requiredPolicyUids: [],
   orgCheckEnabled: false,
   allowedDeptNums: [],
+  hidden: false,
 }
 
 const TOKEN_CHECK_TIMEOUT_MS = 10_000
@@ -88,7 +93,15 @@ export class SsoService {
   }
 
   isEnabled(): boolean {
+    // 隐藏即关闭:hidden=true 时,后端视同 SSO 未启用,所有 /api/auth/sso/*
+    // 路由 404,避免残留链接 / cookie 把用户引到一个 UI 看不见的入口。
+    if (this.cfg.hidden) return false
     return this.cfg.enabled
+  }
+
+  /** UI 是否隐藏蓝信 SSO 入口与配置。由 PORTAL_SSO_HIDDEN env 控制。 */
+  isHidden(): boolean {
+    return this.cfg.hidden
   }
 
   getConfig(): SsoConfig {
@@ -265,6 +278,10 @@ function applyEnvOverrides(cfg: SsoConfig): string[] {
   if (e.PORTAL_SSO_ALLOWED_DEPT_NUMS != null) {
     cfg.allowedDeptNums = parseList(e.PORTAL_SSO_ALLOWED_DEPT_NUMS)
     locked.push('allowedDeptNums')
+  }
+  if (e.PORTAL_SSO_HIDDEN != null) {
+    cfg.hidden = e.PORTAL_SSO_HIDDEN === 'true' || e.PORTAL_SSO_HIDDEN === '1'
+    locked.push('hidden')
   }
   return locked
 }

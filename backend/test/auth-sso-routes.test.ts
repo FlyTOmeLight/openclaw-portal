@@ -36,7 +36,15 @@ describe('SSO auth routes', () => {
   it('status reports ssoEnabled', async () => {
     const { app } = await buildApp(home)
     const res = await app.inject({ method: 'GET', url: '/api/auth/status' })
-    expect(res.json()).toMatchObject({ enabled: false, ssoEnabled: true })
+    expect(res.json()).toMatchObject({ enabled: false, ssoEnabled: true, ssoHidden: false })
+  })
+
+  it('status reports ssoHidden=true and ssoEnabled=false when PORTAL_SSO_HIDDEN is set', async () => {
+    vi.stubEnv('PORTAL_SSO_HIDDEN', 'true')
+    const { app } = await buildApp(home)
+    const res = await app.inject({ method: 'GET', url: '/api/auth/status' })
+    // hidden 视同关闭:ssoEnabled 必须为 false,即使 PORTAL_SSO_ENABLED=true。
+    expect(res.json()).toMatchObject({ ssoEnabled: false, ssoHidden: true })
   })
 
   it('login-url builds 蓝信 URL with backend-derived redirect', async () => {

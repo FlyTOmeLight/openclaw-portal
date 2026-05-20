@@ -189,8 +189,8 @@
         </div>
       </Teleport>
 
-      <!-- 蓝信 SSO -->
-      <div class="section-card settings-section">
+      <!-- 蓝信 SSO（由 PORTAL_SSO_HIDDEN env 控制是否展示） -->
+      <div v-if="!ssoHidden" class="section-card settings-section">
         <div class="section-header">
           <div class="section-head-row">
             <div>
@@ -441,6 +441,8 @@ const saving = reactive({ proxy: false, pw: false, enable: false, sso: false })
 
 // ── Auth enable/disable ──────────────────────────────────────────────────
 const authEnabled = ref(false)
+// 由 PORTAL_SSO_HIDDEN env 控制:true 时蓝信 SSO 配置区块整体不渲染。
+const ssoHidden = ref(false)
 const enableForm = reactive({ password: '', confirm: '' })
 const disableDialog = reactive({ open: false, password: '', busy: false })
 
@@ -451,6 +453,7 @@ async function refreshAuthStatus() {
     if (res.ok) {
       const data = await res.json().catch(() => ({}))
       authEnabled.value = Boolean(data.enabled)
+      ssoHidden.value = Boolean(data.ssoHidden)
     }
   } catch {}
 }

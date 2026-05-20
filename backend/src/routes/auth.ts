@@ -30,7 +30,12 @@ export async function authRoutes(
   })
 
   app.get('/api/auth/status', async () => {
-    return { enabled: auth.isEnabled(), ssoEnabled: sso.isEnabled() }
+    return {
+      enabled: auth.isEnabled(),
+      ssoEnabled: sso.isEnabled(),
+      // 由 PORTAL_SSO_HIDDEN env 控制:true 时前端不渲染蓝信 SSO 入口与配置区块。
+      ssoHidden: sso.isHidden(),
+    }
   })
 
   app.post('/api/auth/login', async (req, reply) => {

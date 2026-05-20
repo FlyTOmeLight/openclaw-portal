@@ -39,6 +39,29 @@ describe('SsoService', () => {
     expect(sso.isEnabled()).toBe(true)
   })
 
+  it('PORTAL_SSO_HIDDEN=true forces isEnabled() to false and exposes isHidden()', async () => {
+    vi.stubEnv('PORTAL_SSO_ENABLED', 'true')
+    vi.stubEnv('PORTAL_SSO_HIDDEN', 'true')
+    const sso = new SsoService(home)
+    await sso.init()
+    expect(sso.isHidden()).toBe(true)
+    expect(sso.isEnabled()).toBe(false)
+    expect(sso.envLockedKeys()).toContain('hidden')
+  })
+
+  it('PORTAL_SSO_HIDDEN=1 also flips the flag (truthy string)', async () => {
+    vi.stubEnv('PORTAL_SSO_HIDDEN', '1')
+    const sso = new SsoService(home)
+    await sso.init()
+    expect(sso.isHidden()).toBe(true)
+  })
+
+  it('hidden defaults to false when env not set', async () => {
+    const sso = new SsoService(home)
+    await sso.init()
+    expect(sso.isHidden()).toBe(false)
+  })
+
   it('buildLoginUrl includes productCode and redirect', async () => {
     const sso = new SsoService(home)
     await sso.init()
