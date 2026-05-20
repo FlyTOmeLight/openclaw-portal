@@ -35,6 +35,11 @@ export interface StoredMessage {
   text: string
   reasoning?: string
   steps?: ToolStep[]
+  // Token usage as reported by the gateway at chat:final. Persisted so the
+  // bubble's "输入 N tok · 输出 N tok" footer survives a refresh — without
+  // this it only shows during the live stream window and silently disappears
+  // when state.messages is rehydrated from IndexedDB.
+  usage?: { input: number; output: number }
   createdAt: number
 }
 

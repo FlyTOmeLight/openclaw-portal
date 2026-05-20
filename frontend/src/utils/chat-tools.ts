@@ -130,28 +130,34 @@ export function extractToolStepsFromHistory(messages: unknown): Map<number, Tool
     return arr
   }
 
-  function upsertUse(id: string, name: string, input: unknown, ownerIdx: number) {
+  // Carry the source message timestamp into the reconstructed step so the
+  // summary's `<span v-if="step.ts">{{ formatTime(step.ts) }}</span>` keeps
+  // rendering after a refresh. Without ts, mid-stream cards show a time and
+  // post-refresh cards do not — the visible-state regression the user spotted.
+  function upsertUse(id: string, name: string, input: unknown, ownerIdx: number, ts?: number) {
     if (ownerIdx < 0) return
     let step = stepById.get(id)
     if (!step) {
-      step = { id, name: name || 'tool', status: 'running' }
+      step = { id, name: name || 'tool', status: 'running', ts }
       stepById.set(id, step)
       bucket(ownerIdx).push(step)
     } else if (name && step.name === 'tool') {
       step.name = name
     }
+    if (step.ts === undefined && ts !== undefined) step.ts = ts
     if (step.input === undefined && input !== undefined) step.input = input
   }
 
-  function upsertResult(id: string, output: unknown, isError: unknown, ownerIdx: number, name?: string) {
+  function upsertResult(id: string, output: unknown, isError: unknown, ownerIdx: number, name?: string, ts?: number) {
     let step = stepById.get(id)
     if (!step) {
       if (ownerIdx < 0) return
-      step = { id, name: name || 'tool', status: 'running' }
+      step = { id, name: name || 'tool', status: 'running', ts }
       stepById.set(id, step)
       bucket(ownerIdx).push(step)
     }
     if (name && step.name === 'tool') step.name = name
+    if (step.ts === undefined && ts !== undefined) step.ts = ts
     if (output !== undefined) step.output = output
     step.status = isError ? 'error' : 'ok'
   }
@@ -164,6 +170,14 @@ export function extractToolStepsFromHistory(messages: unknown): Map<number, Tool
     const isToolMsg = role === 'tool' || role === 'toolresult'
     if (isAssistant) lastAssistantIdx = i
     const ownerIdx = isAssistant ? i : lastAssistantIdx
+    // Gateway history puts timestamps under several shapes (epoch ms, ISO
+    // string, or a `ts` alias) — normalise to ms so the step card's time
+    // chip survives a refresh.
+    const tsRaw = msg.timestamp ?? msg.ts ?? msg.createdAt
+    const tsMs: number | undefined =
+      typeof tsRaw === 'number' ? tsRaw
+        : typeof tsRaw === 'string' ? (Number.isFinite(Date.parse(tsRaw)) ? Date.parse(tsRaw) : undefined)
+        : undefined
 
     // OpenAI-style assistant tool_calls
     if (Array.isArray(msg.tool_calls)) {
@@ -176,7 +190,7 @@ export function extractToolStepsFromHistory(messages: unknown): Map<number, Tool
         let input: unknown = fn?.arguments ?? tc.arguments
         if (typeof input === 'string') { try { input = JSON.parse(input) } catch { /* keep raw */ } }
         const name = String(fn?.name ?? tc.name ?? 'tool')
-        upsertUse(id, name, input, ownerIdx)
+        upsertUse(id, name, input, ownerIdx, tsMs)
       }
     }
 
@@ -189,11 +203,11 @@ export function extractToolStepsFromHistory(messages: unknown): Map<number, Tool
       if (t === 'tooluse' || t === 'toolcall') {
         const id = String(b.id ?? b.toolCallId ?? b.tool_call_id ?? b.toolUseId ?? '')
         if (!id) continue
-        upsertUse(id, String(b.name ?? 'tool'), b.input ?? b.args ?? b.arguments, ownerIdx)
+        upsertUse(id, String(b.name ?? 'tool'), b.input ?? b.args ?? b.arguments, ownerIdx, tsMs)
       } else if (t === 'toolresult') {
         const id = String(b.tool_use_id ?? b.toolCallId ?? b.tool_call_id ?? b.toolUseId ?? b.id ?? '')
         if (!id) continue
-        upsertResult(id, b.content ?? b.output ?? b.result, b.is_error ?? b.isError, ownerIdx, typeof b.name === 'string' ? b.name : undefined)
+        upsertResult(id, b.content ?? b.output ?? b.result, b.is_error ?? b.isError, ownerIdx, typeof b.name === 'string' ? b.name : undefined, tsMs)
       }
     }
 
@@ -201,7 +215,7 @@ export function extractToolStepsFromHistory(messages: unknown): Map<number, Tool
     if (isToolMsg) {
       const id = String(msg.toolCallId ?? msg.tool_call_id ?? msg.id ?? '')
       if (id) {
-        upsertResult(id, msg.content ?? msg.text, msg.isError ?? msg.is_error, ownerIdx, typeof msg.name === 'string' ? msg.name : undefined)
+        upsertResult(id, msg.content ?? msg.text, msg.isError ?? msg.is_error, ownerIdx, typeof msg.name === 'string' ? msg.name : undefined, tsMs)
       }
     }
   })

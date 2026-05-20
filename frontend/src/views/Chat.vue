@@ -941,6 +941,10 @@ function msgToStored(msg: Message, sessionKey: string): StoredMessage {
     id: msg.id, sessionKey, role: msg.role, text: msg.text,
     reasoning: msg.reasoning,
     steps: msg.steps?.length ? msg.steps : undefined,
+    // Preserve token usage across reloads. Without this the footer would
+    // only show during the live-stream window and silently disappear on
+    // refresh, making the same turn look richer mid-stream than after.
+    usage: msg.usage,
     createdAt: msg.createdAt,
   }
 }
@@ -949,6 +953,7 @@ function storedToMsg(s: StoredMessage): Message {
   return {
     id: s.id, role: s.role, text: s.text, reasoning: s.reasoning,
     steps: s.steps?.length ? s.steps : undefined,
+    usage: s.usage,
     phase: 'done', createdAt: s.createdAt,
   }
 }
@@ -1016,27 +1021,34 @@ async function loadSessionHistory(state: AgentConversationState, agentId: string
       }
     }
 
-    // Final fallback: preserve text/reasoning/steps from IndexedDB when both
-    // the projected gateway history and the raw JSONL backfill came up empty
-    // (matched by role + nearest createdAt within 5 min). This covers the
-    // case where the gateway is on a different host and we have no JSONL
-    // access, but the same browser saw the response during streaming.
+    // Backfill from IndexedDB. The gateway history projection reconstructs
+    // ToolStep arrays via extractToolStepsFromHistory, which observes only
+    // what got serialised into the session JSONL — input/output shapes
+    // there are looser than the live event payloads we captured during the
+    // stream. Local snapshots also carry token usage that history never
+    // projects. So:
+    //   - text/reasoning: backfill when gateway came up empty (same as before)
+    //   - usage: always prefer the local snapshot
+    //   - steps: prefer the locally-merged version whenever we have one;
+    //            it preserves ts (time chip), full input/output, and any
+    //            ordering captured live. Falling back to history-extracted
+    //            steps would silently lose the time chip and re-collapse the
+    //            cards after refresh — the "卡片不一样" regression.
     if (msgs.length && local.length) {
-      const localCached = local.map(storedToMsg).filter(m => m.text || m.steps?.length)
+      const localCached = local.map(storedToMsg).filter(m => m.text || m.steps?.length || m.usage)
       const TOLERANCE_MS = 5 * 60 * 1000
       for (const m of msgs) {
         if (m.role !== 'assistant') continue
-        if (m.text && m.text.trim()) continue
-        if (m.steps?.length) continue
         const localMatch = localCached
-          .filter(l => l.role === 'assistant' && (l.text || l.steps?.length))
+          .filter(l => l.role === 'assistant')
           .map(l => ({ l, delta: Math.abs((l.createdAt || 0) - (m.createdAt || 0)) }))
           .filter(({ delta }) => delta <= TOLERANCE_MS)
           .sort((a, b) => a.delta - b.delta)[0]?.l
         if (!localMatch) continue
-        if (!m.text && localMatch.text) m.text = localMatch.text
+        if ((!m.text || !m.text.trim()) && localMatch.text) m.text = localMatch.text
         if (!m.reasoning && localMatch.reasoning) m.reasoning = localMatch.reasoning
-        if (!m.steps?.length && localMatch.steps?.length) m.steps = localMatch.steps
+        if (!m.usage && localMatch.usage) m.usage = localMatch.usage
+        if (localMatch.steps?.length) m.steps = localMatch.steps
       }
     }
 
