@@ -4,6 +4,7 @@ import type { AgentRouteBinding, OpenclawConfig } from '../types/openclaw.js'
 import { readFile, writeFile, readdir, stat, mkdir, rm } from 'fs/promises'
 import { join, basename } from 'path'
 import { existsSync } from 'fs'
+import { getGatewayRpc } from '../services/gateway-rpc.js'
 
 const FILE_DESCRIPTIONS: Record<string, string> = {
   'SOUL.md':         'Agent 人格与行为准则',
@@ -212,7 +213,15 @@ async function enrichAgent(agent: AgentInfo, cfg: OpenclawConfig): Promise<Agent
   return agent
 }
 
-export async function agentsRoutes(app: FastifyInstance, openclawHome: string, _openclawBin: string, configManager: ConfigManager) {
+export async function agentsRoutes(
+  app: FastifyInstance,
+  openclawHome: string,
+  _openclawBin: string,
+  configManager: ConfigManager,
+  gatewayPort: number,
+  portalPort: number,
+) {
+  const rpc = () => getGatewayRpc(gatewayPort, openclawHome, portalPort)
   // GET /api/agents — list all agents
   app.get('/api/agents', async () => {
     const cfg = await configManager.read()
@@ -455,6 +464,31 @@ export async function agentsRoutes(app: FastifyInstance, openclawHome: string, _
     if (!agents.find(a => a.id === req.params.id)) return reply.status(404).send({ error: 'Agent not found' })
     const toolsCfg = await configManager.getAgentToolsConfig(req.params.id)
     return { profile: toolsCfg.profile ?? '', allow: toolsCfg.allow ?? [], alsoAllow: toolsCfg.alsoAllow ?? [], deny: toolsCfg.deny ?? [] }
+  })
+
+  // GET /api/agents/:id/tools/catalog — proxy to gateway `tools.catalog`.
+  // Returns the runtime-authoritative tool inventory (groups + tools + profile
+  // options) for this agent. The portal UI uses this to populate the tool
+  // pickers; without it we'd have to ship a hard-coded list that drifts from
+  // the gateway every release and uses the wrong naming convention
+  // (PascalCase vs the snake_case OpenClaw expects, e.g. Bash → exec).
+  app.get<{
+    Params: { id: string }
+    Querystring: { includePlugins?: string }
+  }>('/api/agents/:id/tools/catalog', async (req, reply) => {
+    const cfg = await configManager.read()
+    const agents = await listAgents(openclawHome, cfg)
+    if (!agents.find(a => a.id === req.params.id)) return reply.status(404).send({ error: 'Agent not found' })
+    const includePlugins = req.query.includePlugins !== 'false'
+    try {
+      const r = await rpc().request('tools.catalog', {
+        agentId: req.params.id,
+        includePlugins,
+      })
+      return r ?? { agentId: req.params.id, profiles: [], groups: [] }
+    } catch (err: any) {
+      return reply.status(502).send({ error: `网关 RPC 失败: ${err?.message ?? err}` })
+    }
   })
 
   // PUT /api/agents/:id/tools — write per-agent tools config

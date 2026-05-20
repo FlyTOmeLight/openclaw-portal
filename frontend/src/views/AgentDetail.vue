@@ -247,6 +247,7 @@
           <ToolTagInput
             v-model="toolsForm.allow"
             variant="allow"
+            :suggestions="toolSuggestions"
             placeholder="搜索或输入工具名，Enter 确认…"
           />
           <p class="form-hint">完全替换 profile 的工具列表（留空则沿用 profile 默认值）</p>
@@ -261,6 +262,7 @@
           <ToolTagInput
             v-model="toolsForm.alsoAllow"
             variant="also"
+            :suggestions="toolSuggestions"
             placeholder="在 profile 基础上额外允许的工具…"
           />
           <p class="form-hint">不替换 profile，只在其上追加</p>
@@ -275,6 +277,7 @@
           <ToolTagInput
             v-model="toolsForm.deny"
             variant="deny"
+            :suggestions="toolSuggestions"
             placeholder="始终禁止的工具，优先级最高…"
           />
           <p class="form-hint">deny 优先级高于所有 allow，无论 profile 如何设置</p>
@@ -472,6 +475,14 @@ const agentSuggestions = ref<{ value: string; label: string }[]>([])
 const toolsForm = reactive({ profile: '', allow: [] as string[], alsoAllow: [] as string[], deny: [] as string[] })
 const savingTools = ref(false)
 const toolsLoaded = ref(false)
+// Suggestions for the three ToolTagInput pickers come from the gateway's
+// runtime tools.catalog (proxied via /api/agents/:id/tools/catalog), not from
+// a hard-coded list — gateway-side naming is snake_case (`read`, `exec`,
+// `web_search`) and includes whatever plugin tools the running deployment
+// has enabled, so any hard-coded UI list would silently drift and feed
+// invalid tool names into the agent config.
+interface ToolSugItem { value: string; label: string; isGroup?: boolean }
+const toolSuggestions = ref<ToolSugItem[]>([])
 
 // Skills
 const allSkills = ref<any[]>([])
@@ -611,6 +622,28 @@ async function loadTools() {
     toolsForm.deny      = cfg.deny      ?? []
     toolsLoaded.value = true
   } catch {}
+  // Best-effort: pull the runtime tool catalog and flatten it into the
+  // shape ToolTagInput's suggestions prop expects (groups first, then each
+  // tool prefixed with its group icon). Catalog failure is silent — the
+  // input still accepts free-form entry.
+  try {
+    const cat = await api.agents.toolsCatalog(agentId.value, true)
+    const sugs: ToolSugItem[] = []
+    for (const g of cat.groups ?? []) {
+      const groupId = g.sectionId ? `group:${g.sectionId}` : ''
+      if (groupId) sugs.push({ value: groupId, label: g.label || groupId, isGroup: true })
+      for (const t of g.tools ?? []) {
+        if (!t.id) continue
+        sugs.push({ value: t.id, label: t.description || t.label || t.id })
+      }
+    }
+    // De-dup by value in case a tool appears in both a core group and a
+    // plugin group (catalog already filters this, defensive belt+braces).
+    const seen = new Set<string>()
+    toolSuggestions.value = sugs.filter(s => (seen.has(s.value) ? false : (seen.add(s.value), true)))
+  } catch {
+    toolSuggestions.value = []
+  }
 }
 
 async function saveTools() {

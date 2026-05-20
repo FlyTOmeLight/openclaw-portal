@@ -44,29 +44,44 @@ import { ref, computed } from 'vue'
 
 interface SugItem { value: string; label: string; isGroup?: boolean; icon?: string }
 
+// Fallback list used ONLY when no `:suggestions` prop is supplied. Mirrors
+// OpenClaw 2026.5's runtime tools.catalog: snake_case core tool ids and
+// `group:<sectionId>` groups. Callers SHOULD pass `:suggestions` from the
+// gateway's `tools.catalog` so the list reflects the running deployment
+// (core + enabled plugins). The previous fallback shipped Claude-Code-style
+// PascalCase names (Read, Write, Bash, WebSearch) and a non-existent
+// `group:agents` — the gateway silently ignores both.
 const ALL_TOOLS: SugItem[] = [
-  // groups
-  { value: 'group:fs',        label: '文件系统工具集',   isGroup: true },
-  { value: 'group:web',       label: '网络/搜索工具集',  isGroup: true },
-  { value: 'group:runtime',   label: '代码执行工具集',   isGroup: true },
-  { value: 'group:memory',    label: '记忆工具集',       isGroup: true },
-  { value: 'group:sessions',  label: '会话管理工具集',   isGroup: true },
-  { value: 'group:messaging', label: '消息推送工具集',   isGroup: true },
-  { value: 'group:agents',    label: '子 Agent 工具集',  isGroup: true },
-  { value: 'group:ui',        label: 'UI 交互工具集',    isGroup: true },
-  // individual tools
-  { value: 'Read',         label: '读取文件' },
-  { value: 'Write',        label: '写入文件' },
-  { value: 'Edit',         label: '编辑文件' },
-  { value: 'Bash',         label: '执行 Shell 命令' },
-  { value: 'Glob',         label: '文件匹配搜索' },
-  { value: 'Grep',         label: '内容正则搜索' },
-  { value: 'WebSearch',    label: '网页搜索' },
-  { value: 'WebFetch',     label: '抓取网页内容' },
-  { value: 'Agent',        label: '启动子 Agent' },
-  { value: 'TodoWrite',    label: '写入 Todo 列表' },
-  { value: 'NotebookEdit', label: '编辑 Notebook' },
-  { value: 'mcp__*',       label: '所有 MCP 工具' },
+  // groups (core sectionIds from gateway tools.catalog)
+  { value: 'group:fs',        label: '文件系统工具集',     isGroup: true },
+  { value: 'group:runtime',   label: '代码执行工具集',     isGroup: true },
+  { value: 'group:web',       label: '网络 / 搜索工具集',  isGroup: true },
+  { value: 'group:memory',    label: '记忆工具集',         isGroup: true },
+  { value: 'group:sessions',  label: '会话管理工具集',     isGroup: true },
+  { value: 'group:messaging', label: '消息推送工具集',     isGroup: true },
+  { value: 'group:ui',        label: 'UI 交互工具集',      isGroup: true },
+  { value: 'group:openclaw',  label: 'OpenClaw 集成工具集', isGroup: true },
+  // individual tools — canonical snake_case ids
+  { value: 'read',             label: '读取文件' },
+  { value: 'write',            label: '写入文件' },
+  { value: 'edit',             label: '精准编辑' },
+  { value: 'apply_patch',      label: '应用补丁' },
+  { value: 'exec',             label: '执行 Shell 命令' },
+  { value: 'process',          label: '管理 exec 会话' },
+  { value: 'code_execution',   label: '远程沙箱代码' },
+  { value: 'web_search',       label: '网页搜索' },
+  { value: 'web_fetch',        label: '抓取网页内容' },
+  { value: 'x_search',         label: '搜索 X 帖子' },
+  { value: 'memory_search',    label: '语义搜索记忆' },
+  { value: 'memory_get',       label: '读取记忆文件' },
+  { value: 'sessions_list',    label: '列出会话' },
+  { value: 'sessions_history', label: '读取会话历史' },
+  { value: 'sessions_send',    label: '向会话发消息' },
+  { value: 'sessions_spawn',   label: '派生子 Agent' },
+  { value: 'session_status',   label: '会话状态' },
+  { value: 'browser',          label: '浏览器控制' },
+  { value: 'canvas',           label: 'Canvas 表面控制' },
+  { value: 'message',          label: '发送消息(渠道)' },
 ]
 
 const props = defineProps<{

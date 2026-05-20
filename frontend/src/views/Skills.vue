@@ -414,6 +414,7 @@
                   <n-button v-if="skill.enabled && skill.agent" size="small" @click="store.disable(skill.name, skill.agent)">禁用</n-button>
                   <n-button v-if="!skill.enabled && skill.agent" type="primary" size="small" @click="store.enable(skill.name, skill.agent)">启用</n-button>
                   <span v-if="!skill.agent" class="global-tag">全局</span>
+                  <n-button size="small" @click="openSkillDeps(skill)" title="检查技能依赖完整度">依赖</n-button>
                   <n-button size="small" type="error" ghost @click="removeSkill(skill)">删除</n-button>
                 </div>
               </article>
@@ -554,6 +555,7 @@
     </Teleport>
 
     <SkillFilesModal v-model:show="filesModal.show" :skill="filesModal.skill" />
+    <SkillDepsModal v-model:show="depsModal.show" :skill="depsModal.skill" />
   </div>
 </template>
 
@@ -565,6 +567,7 @@ import type { RegistrySource } from '../stores/skills.js'
 import { useNaiveToast } from '../composables/useNaiveToast.js'
 import { useConfirm } from '../composables/useConfirm.js'
 import SkillFilesModal from '../components/SkillFilesModal.vue'
+import SkillDepsModal from '../components/SkillDepsModal.vue'
 
 const store = useSkillsStore()
 const toast = useNaiveToast()
@@ -870,6 +873,14 @@ function openSkillFiles(skill: any) {
   if (!skill?.relPath && !skill?.path) return
   filesModal.skill = skill
   filesModal.show = true
+}
+
+const depsModal = reactive<{ show: boolean; skill: any }>({ show: false, skill: null })
+
+function openSkillDeps(skill: any) {
+  // Modal only needs name + agent — strip the rest so it can be re-fetched fresh.
+  depsModal.skill = { name: skill.name, agent: skill.agent ?? null }
+  depsModal.show = true
 }
 
 async function removeSkill(skill: any) {

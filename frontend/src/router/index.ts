@@ -44,6 +44,7 @@ export const router = createRouter({
     { path: '/agents/:id', component: () => import('../views/AgentDetail.vue') },
     { path: '/channels',   component: () => import('../views/Channels.vue') },
     { path: '/skills',     component: () => import('../views/Skills.vue') },
+    { path: '/skill-health', component: () => import('../views/SkillHealth.vue') },
     { path: '/plugins',    component: () => import('../views/Plugins.vue') },
     { path: '/memory',     component: () => import('../views/Memory.vue') },
     { path: '/dreaming',   component: () => import('../views/Dreaming.vue') },

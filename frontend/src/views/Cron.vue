@@ -6,7 +6,7 @@
         <p class="subtitle">通过 Gateway 调度器管理定时任务</p>
       </div>
       <div class="header-actions">
-        <n-button size="small" @click="load">刷新</n-button>
+        <n-button size="small" @click="() => load()">刷新</n-button>
         <n-button type="primary" @click="openDialog(null)">+ 新建任务</n-button>
       </div>
     </div>
@@ -204,9 +204,9 @@
             <span class="detail-label">任务 ID</span>
             <code class="detail-value mono">{{ job.id }}</code>
           </div>
-          <div v-if="job.delivery?.channel" class="detail-row">
+          <div v-if="jobChannel(job)" class="detail-row">
             <span class="detail-label">播报渠道</span>
-            <span class="detail-value">{{ job.delivery.channel }}</span>
+            <span class="detail-value">{{ jobChannel(job) }}</span>
           </div>
           <div v-if="nextRunAbsolute(job)" class="detail-row">
             <span class="detail-label">下次运行</span>
@@ -493,21 +493,27 @@ onMounted(async () => {
   loadStatus()
 })
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  // `silent` keeps the existing rendered job list visible during polling /
+  // background refresh — without it `loading=true` would flip every card back
+  // to a skeleton, causing the "blank cards" flash users see after pressing
+  // "立即执行".
+  if (!silent) loading.value = true
   gwOffline.value = false
   try {
-    jobs.value = await api.cron.list()
+    const next = await api.cron.list()
+    jobs.value = next
   } catch (err: any) {
     if (err.message?.includes('Gateway not available')) {
       gwOffline.value = true
-      jobs.value = []
+      if (!silent) jobs.value = []
     } else {
       toast.error(`加载失败: ${err.message}`)
-      jobs.value = []
+      // On a silent refresh, keep the last good list rather than clearing.
+      if (!silent) jobs.value = []
     }
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -534,7 +540,11 @@ async function loadChannelAccounts(channel: string) {
   if (!channel) { channelAccounts.value = []; return }
   try {
     const platforms = await api.channels.listConfiguredPlatforms()
-    const p = platforms.find((p: any) => p.id === channel || channel.includes(p.id))
+    // Match case-insensitively — openclaw.json may store the channel id with
+    // different casing than the gateway echoes back.
+    const lower = channel.toLowerCase()
+    const p = platforms.find((p: any) =>
+      p.id?.toLowerCase() === lower || lower.includes(String(p.id ?? '').toLowerCase()))
     channelAccounts.value = (p?.accounts ?? []).map((a: any) => ({
       accountId: a.accountId,
       displayId: a.appId || a.displayId || a.accountId,
@@ -614,6 +624,31 @@ function lastRunAt(job: any): string | null {
 
 function hasConsecutiveErrors(job: any): boolean {
   return (job.state?.consecutiveErrors ?? 0) >= 2
+}
+
+// Channel-field accessors — gateway versions have shipped the delivery info
+// under slightly different keys (`delivery.channel` vs `delivery.channelId`,
+// occasionally at the job top-level). Read through these helpers so the edit
+// dialog + detail row keep working regardless of which gateway is upstream.
+function jobChannel(job: any): string {
+  return job?.delivery?.channel ?? job?.delivery?.channelId ?? job?.channel ?? ''
+}
+// Canonicalise a channel id to the case actually registered in
+// `channels.value` (which comes from openclaw.json `channels` keys). The
+// gateway may echo back the channel id in lowercase even when openclaw.json
+// stores it capitalised (e.g. `Lansenger`) — without this lookup the select's
+// v-model wouldn't match any <option value="...">, so the dropdown would
+// render blank on edit/dup even though the job has a channel.
+function canonicalChannelName(raw: string): string {
+  if (!raw) return ''
+  const hit = channels.value.find(c => c.toLowerCase() === raw.toLowerCase())
+  return hit ?? raw
+}
+function jobAccountId(job: any): string {
+  return job?.delivery?.accountId ?? job?.delivery?.account ?? job?.accountId ?? ''
+}
+function jobTo(job: any): string {
+  return job?.delivery?.to ?? job?.delivery?.target ?? job?.to ?? ''
 }
 
 function deliveryBadge(job: any): { text: string; cls: string } | null {
@@ -765,7 +800,10 @@ function openDialog(job: any) {
       else { intervalValue.value = Math.round(ms / 60000); intervalUnit.value = 'm' }
       schedStr = `every:${intervalValue.value}${intervalUnit.value}`
     }
-    const ch = job.delivery?.channel ?? ''
+    // Canonicalise to match the case actually present in the select options
+    // (otherwise v-model on a lowercase value won't bind to a capital-case
+    // <option>, and the dropdown looks empty).
+    const ch = canonicalChannelName(jobChannel(job))
     form.value = {
       name: job.name ?? '',
       description: job.description ?? '',
@@ -773,8 +811,8 @@ function openDialog(job: any) {
       schedule: schedStr || '0 9 * * *',
       agentId: job.agentId ?? '',
       channel: ch,
-      accountId: job.delivery?.accountId ?? '',
-      to: job.delivery?.to ?? '',
+      accountId: jobAccountId(job),
+      to: jobTo(job),
       enabled: job.enabled !== false,
     }
     if (ch) loadChannelAccounts(ch)
@@ -843,7 +881,8 @@ async function triggerRun(job: any) {
     toast.success('已触发执行，稍后刷新可查看结果')
     let polls = 0
     const poll = setInterval(async () => {
-      await load()
+      // Silent refresh — don't flash skeletons mid-poll. (Bug fix.)
+      await load(true)
       polls++
       if (polls >= 3) clearInterval(poll)
     }, 2000)
@@ -871,7 +910,7 @@ function duplicateJob(job: any) {
   let schedStr = ''
   if (typeof sched === 'string') schedStr = sched
   else if (sched?.kind === 'cron') schedStr = sched.expr ?? ''
-  const ch = job.delivery?.channel ?? ''
+  const ch = canonicalChannelName(jobChannel(job))
   form.value = {
     name: `${job.name}（副本）`,
     description: job.description ?? '',
@@ -879,8 +918,8 @@ function duplicateJob(job: any) {
     schedule: schedStr || '0 9 * * *',
     agentId: job.agentId ?? '',
     channel: ch,
-    accountId: job.delivery?.accountId ?? '',
-    to: job.delivery?.to ?? '',
+    accountId: jobAccountId(job),
+    to: jobTo(job),
     enabled: false,
   }
   if (ch) loadChannelAccounts(ch)

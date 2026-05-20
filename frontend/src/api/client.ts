@@ -51,6 +51,38 @@ export interface ChatCompleteOptions {
   conversationKey?: string
 }
 
+export interface DepItem {
+  name: string
+  declaredIn?: string
+  present: boolean
+  detail?: string
+}
+export interface DepCategoryResult {
+  declared: number
+  missing: number
+  present: number
+  items: DepItem[]
+}
+export interface SkillDepsReport {
+  name: string
+  agent: string | null
+  path: string
+  scannedAt: number
+  openclaw: DepCategoryResult
+  system: DepCategoryResult
+  node: DepCategoryResult
+  python: DepCategoryResult
+  totalMissing: number
+}
+export interface SkillHealthSummary {
+  name: string
+  agent: string | null
+  totalDeclared: number
+  totalMissing: number
+  status: 'ok' | 'missing' | 'unknown'
+  scannedAt: number
+}
+
 export interface PluginSearchResult {
   name: string
   version: string
@@ -115,6 +147,26 @@ export const api = {
       })
     },
   },
+  skillDeps: {
+    // Overview across every installed skill. `refresh=true` busts the server-side
+    // cache and forces a re-scan.
+    health: (refresh = false) =>
+      req<{ skills: Array<{
+        name: string; agent: string | null; totalDeclared: number; totalMissing: number;
+        status: 'ok' | 'missing' | 'unknown'; scannedAt: number
+      }> }>('GET', `/skills/health${refresh ? '?refresh=1' : ''}`),
+
+    // Per-skill deep scan (4 dimensions).
+    checkSkill: (agent: string | null, name: string, refresh = false) => {
+      const a = encodeURIComponent(agent ?? '_global')
+      const n = encodeURIComponent(name)
+      return req<{
+        name: string; agent: string | null; path: string; scannedAt: number;
+        openclaw: DepCategoryResult; system: DepCategoryResult; node: DepCategoryResult;
+        python: DepCategoryResult; totalMissing: number
+      }>('GET', `/skills/${a}/${n}/deps${refresh ? '?refresh=1' : ''}`)
+    },
+  },
   plugins: {
     list: () => cached('plugins/list', 15_000, () => req<any[]>('GET', '/plugins')),
     install: (packageName: string) =>
@@ -152,6 +204,15 @@ export const api = {
   agents: {
     list: () => cached('agents/list', 10_000, () => req<any[]>('GET', '/agents')),
     get: (id: string) => req<any>('GET', `/agents/${id}`),
+    // Runtime-authoritative tool catalog from the gateway (proxied through
+    // backend). Used to populate the tool pickers so the names always match
+    // what the gateway actually accepts (snake_case, current plugin set).
+    toolsCatalog: (id: string, includePlugins = true) =>
+      req<{
+        agentId: string
+        profiles: { id: string; label: string }[]
+        groups: { sectionId: string; label?: string; tools: { id: string; label?: string; description?: string }[] }[]
+      }>('GET', `/agents/${encodeURIComponent(id)}/tools/catalog${includePlugins ? '' : '?includePlugins=false'}`),
     create: (id: string, model?: string, workspace?: string) =>
       req<{ ok: boolean }>('POST', '/agents', { id, model, workspace })
         .then(r => { bust('agents/list'); return r }),

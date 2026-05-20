@@ -16,6 +16,8 @@ import { StatusBroadcaster } from './services/status-broadcaster.js'
 import { serviceRoutes } from './routes/service.js'
 import { modelsRoutes } from './routes/models.js'
 import { skillsRoutes } from './routes/skills.js'
+import { skillDepsRoutes } from './routes/skill-deps.js'
+import { SkillDepsChecker } from './services/skill-deps-checker.js'
 import { pluginsRoutes } from './routes/plugins.js'
 import { agentsRoutes } from './routes/agents.js'
 import { channelsRoutes } from './routes/channels.js'
@@ -62,6 +64,7 @@ const settingsPath = join(config.openclawHome, 'portal-settings.json')
 const configManager = new ConfigManager(configPath)
 const processManager = new ProcessManager({ openclawBin: config.openclawBin, gatewayPort: config.gatewayPort, openclawHome: config.openclawHome })
 const skillManager = new SkillManager(config.openclawHome)
+const skillDepsChecker = new SkillDepsChecker(skillManager, config.openclawBin)
 const pluginManager = new PluginManager(config.openclawHome, config.openclawBin)
 const channelManager = new ChannelManager(configPath, config.openclawBin, processManager)
 const usageTracker = new UsageTracker(config.openclawHome)
@@ -171,8 +174,9 @@ if (existsSync(config.frontendDist)) {
 await serviceRoutes(app, processManager, broadcaster)
 await modelsRoutes(app, configManager)
 await skillsRoutes(app, skillManager, settingsManager)
+await skillDepsRoutes(app, skillDepsChecker)
 await pluginsRoutes(app, pluginManager, processManager)
-await agentsRoutes(app, config.openclawHome, config.openclawBin, configManager)
+await agentsRoutes(app, config.openclawHome, config.openclawBin, configManager, config.gatewayPort, config.portalPort)
 await channelsRoutes(app, channelManager, pluginManager, config.gatewayPort, config.openclawBin)
 await systemRoutes(app, configManager, processManager)
 await chatRoutes(app, config.gatewayPort, config.openclawHome, config.portalPort, usageTracker)

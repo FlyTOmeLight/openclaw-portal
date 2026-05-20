@@ -92,3 +92,34 @@ export async function runCli(
 
   return stdout
 }
+
+/**
+ * Non-throwing variant of {@link runCli}: returns the captured stdout/stderr
+ * plus the numeric exit code instead of throwing on non-zero. Intended for
+ * read-only probes (`which`, `pip3 list`, `openclaw skills list`) where a
+ * non-zero exit is a normal answer ("not installed") rather than an error.
+ *
+ * Does NOT touch the command log — these probes are noisy and would drown
+ * out the interesting CLI operations users actually triggered.
+ */
+export async function execFileSafe(
+  bin: string,
+  args: string[],
+  opts: { timeoutMs?: number } = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  try {
+    const r = await execFileAsync(bin, args, {
+      encoding: 'utf-8',
+      timeout: opts.timeoutMs ?? 5000,
+    })
+    return { stdout: String(r.stdout ?? ''), stderr: String(r.stderr ?? ''), code: 0 }
+  } catch (e: any) {
+    return {
+      stdout: String(e?.stdout ?? ''),
+      stderr: String(e?.stderr ?? e?.message ?? ''),
+      // execFile callback puts the exit code on `code` (string like "ENOENT")
+      // OR `status` (number). Map non-numeric to 1.
+      code: typeof e?.code === 'number' ? e.code : (typeof e?.status === 'number' ? e.status : 1),
+    }
+  }
+}
