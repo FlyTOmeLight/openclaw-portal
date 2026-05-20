@@ -1044,7 +1044,23 @@ async function loadSessionHistory(state: AgentConversationState, agentId: string
     // re-merging from local cache, so the UI doesn't render blank bubbles.
     const visible = msgs.filter(m => m.role === 'user' || m.text || m.steps?.length)
     if (visible.length) {
-      state.messages = visible
+      // Preserve any in-flight streaming turn — assistant deltas are flushed
+      // to IndexedDB incrementally (see sendViaWs), but the gateway only
+      // appends a turn to chat.history after it finishes writing JSONL. On a
+      // mid-stream remount the gateway projection is therefore behind by
+      // exactly the turn the user is watching, so we keep local entries whose
+      // createdAt is newer than the gateway's last known turn and append them
+      // after the projected history.
+      const cutoffTs = visible.at(-1)?.createdAt ?? 0
+      const localCached = local.map(storedToMsg).filter(m => m.text || m.steps?.length)
+      const tail = localCached.filter(l => (l.createdAt ?? 0) > cutoffTs)
+      // Also keep a locally-streaming assistant turn if one is currently in
+      // state.messages (KeepAlive path — Chat survived nav but loadSessionHistory
+      // still gets called by some flows). Streaming msgs have `streaming: true`.
+      const liveStreaming = (state.messages ?? []).filter(m => m.streaming)
+      state.messages = [...visible, ...tail, ...liveStreaming.filter(m =>
+        !tail.some(t => t.id === m.id),
+      )]
       await saveMessages(visible.map(m => msgToStored(m, sessionKey)))
       await nextTick(); jumpToBottom()
     }
@@ -1078,6 +1094,30 @@ async function sendViaWs(
   let safetyTimer: ReturnType<typeof setTimeout> | null = null
 
   return new Promise<void>((resolve, reject) => {
+    // Incremental persistence — every mutation to assistantMsg during the
+    // stream is debounced and flushed to IndexedDB. Without this, an
+    // in-flight stream that gets interrupted by component unmount, page
+    // refresh, ws disconnect, or any other lifecycle event silently loses
+    // its accumulated text, reasoning, and tool steps; loadSessionHistory
+    // on the next mount then sees a half-empty record and overlays gateway
+    // history that has not yet caught up, manifesting as "stuff goes
+    // missing after switching pages."
+    let saveTimer: ReturnType<typeof setTimeout> | null = null
+    let stopSaveWatch: (() => void) | null = null
+    function flushSave() {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+      void saveMessage(msgToStored(assistantMsg, sessionKey))
+    }
+    function scheduleSave() {
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => { saveTimer = null; flushSave() }, 500)
+    }
+    stopSaveWatch = watch(
+      () => assistantMsg,
+      () => scheduleSave(),
+      { deep: true },
+    )
+
     function cleanup() {
       if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
       cancelSettle()
@@ -1085,6 +1125,9 @@ async function sendViaWs(
       if (idx !== -1) chatEventHandlers.splice(idx, 1)
       const aidx = agentEventHandlers.indexOf(agentHandler)
       if (aidx !== -1) agentEventHandlers.splice(aidx, 1)
+      stopSaveWatch?.()
+      stopSaveWatch = null
+      flushSave()   // capture the final assistantMsg state before resolving
     }
 
     function finish(err?: Error) {
@@ -1398,8 +1441,13 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  activeAbort?.()
-  try { chatWs?.close() } catch {}
+  // Intentionally do NOT abort the gateway run or close the ws here.
+  // KeepAlive should prevent unmount during in-portal navigation; the only
+  // paths that actually reach this hook are page reload and tab close, both
+  // of which already tear down the ws at the browser layer. Sending
+  // chat.abort would truncate a turn whose incremental snapshot has already
+  // been flushed to IndexedDB — the user would see the stream stop mid-
+  // sentence even though the model was still happy to keep talking.
 })
 
 watch(selectedAgentId, async (agentId) => {

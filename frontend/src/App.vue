@@ -142,10 +142,17 @@
     </nav>
 
     <main class="main-panel">
-      <RouterView v-slot="{ Component }">
-        <KeepAlive include="Chat">
-          <component :is="Component" />
+      <RouterView v-slot="{ Component, route }">
+        <!-- Routes that opt-in via `meta.keepAlive` are cached. We avoid
+             KeepAlive's `include` prop because lazy-loaded SFCs
+             (`() => import('./Foo.vue')`) expose an async-wrapper name
+             rather than the inner component's name, so `include="Chat"`
+             silently never matched and Chat was remounted on every nav,
+             dropping its in-flight stream and tool steps. -->
+        <KeepAlive>
+          <component :is="Component" v-if="route.meta.keepAlive" :key="route.path" />
         </KeepAlive>
+        <component :is="Component" v-if="!route.meta.keepAlive" />
       </RouterView>
     </main>
   </div>

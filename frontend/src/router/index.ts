@@ -31,7 +31,10 @@ export const router = createRouter({
     { path: '/',           component: Dashboard },
 
     // ── Core ───────────────────────────────────────────────
-    { path: '/chat',       component: () => import('../views/Chat.vue') },
+    // Chat must keep-alive — streaming runs, tool steps, and the ws are all
+    // tied to the component instance. Without keep-alive, an in-flight response
+    // is silently dropped the moment the user navigates away.
+    { path: '/chat',       component: () => import('../views/Chat.vue'), meta: { keepAlive: true } },
     { path: '/files',      component: () => import('../views/FileBrowser.vue') },
     { path: '/topology',   component: () => import('../views/Topology.vue') },
 
