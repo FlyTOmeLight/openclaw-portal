@@ -146,23 +146,51 @@ export async function filesRoutes(app: FastifyInstance) {
   })
 
   // POST /api/files/upload?dir=/target/dir  — multipart
+  // Stream each part directly to disk via pipeline — buffering the whole file
+  // with Buffer.concat() OOMs on big tarballs and adds latency. Errors are
+  // surfaced verbatim so the frontend can show the real cause instead of 500.
   app.post<{ Querystring: { dir?: string } }>('/api/files/upload', async (req, reply) => {
     const targetDir = safePath(req.query.dir ?? '/')
     if (!targetDir) return reply.status(400).send({ error: 'Invalid path' })
-    await mkdir(targetDir, { recursive: true })
 
-    const parts = req.files()
-    const saved: string[] = []
-    for await (const part of parts) {
-      const name = basename(part.filename)
-      const dest = join(targetDir, name)
-      const destSafe = safePath(dest)
-      if (!destSafe) continue
-      const chunks: Buffer[] = []
-      for await (const chunk of part.file) chunks.push(chunk)
-      await writeFile(destSafe, Buffer.concat(chunks))
-      saved.push(name)
+    try {
+      await mkdir(targetDir, { recursive: true })
+    } catch (err: any) {
+      req.log.error({ err, targetDir }, 'upload: mkdir failed')
+      return reply.status(500).send({ error: `mkdir failed: ${err.message}` })
     }
-    return { ok: true, saved }
+
+    const { createWriteStream } = await import('fs')
+    const { pipeline } = await import('stream/promises')
+
+    const saved: string[] = []
+    try {
+      const parts = req.files()
+      for await (const part of parts) {
+        if (!part.filename) continue
+        const name = basename(part.filename)
+        const dest = join(targetDir, name)
+        const destSafe = safePath(dest)
+        if (!destSafe) {
+          req.log.warn({ name, dest }, 'upload: rejected unsafe path')
+          continue
+        }
+        await pipeline(part.file, createWriteStream(destSafe))
+        // truncated = fileSize limit hit mid-stream. The partial file is on disk
+        // but unusable; remove it and surface the limit to the caller.
+        if (part.file.truncated) {
+          await unlink(destSafe).catch(() => {})
+          return reply.status(413).send({ error: `${name} 超过单文件大小限制(100MB)` })
+        }
+        saved.push(name)
+      }
+      return { ok: true, saved }
+    } catch (err: any) {
+      req.log.error({ err, targetDir }, 'upload: write failed')
+      // Common shapes: RequestFileTooLargeError (413), EACCES/ENOSPC (500).
+      const code = err?.code ?? ''
+      const status = err?.statusCode ?? (code === 'FST_REQ_FILE_TOO_LARGE' ? 413 : 500)
+      return reply.status(status).send({ error: `${code ? code + ': ' : ''}${err.message}` })
+    }
   })
 }

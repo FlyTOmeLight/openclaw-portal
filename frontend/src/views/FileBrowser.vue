@@ -499,15 +499,32 @@ function uploadOne(file: File, dir: string, slot: UploadingFile): Promise<void> 
         slot.status = 'done'
       } else {
         slot.status = 'error'
-        // 413 or nginx HTML page = reverse-proxy rejected before reaching Fastify.
-        const isHtml = (xhr.getResponseHeader('content-type') ?? '').includes('text/html')
-        slot.error = xhr.status === 413 || isHtml
-          ? `文件过大,被网关拒绝 (HTTP ${xhr.status})。请联系管理员调整 nginx client_max_body_size。`
-          : `HTTP ${xhr.status}`
+        // Pull the real error out of the JSON body when the backend sent one;
+        // fall back to a nginx-413 hint when the response is the nginx HTML page.
+        const ct = xhr.getResponseHeader('content-type') ?? ''
+        let backendErr = ''
+        if (ct.includes('application/json')) {
+          try { backendErr = (JSON.parse(xhr.responseText) as any)?.error ?? '' } catch {}
+        }
+        if (backendErr) {
+          slot.error = `HTTP ${xhr.status}: ${backendErr}`
+        } else if (xhr.status === 413 || ct.includes('text/html')) {
+          slot.error = `文件过大,被网关拒绝 (HTTP ${xhr.status})。请联系管理员调整 nginx client_max_body_size。`
+        } else {
+          slot.error = `HTTP ${xhr.status}`
+        }
       }
       resolve()
     }
-    xhr.onerror = () => { slot.status = 'error'; slot.error = '网络错误'; resolve() }
+    xhr.onerror = () => {
+      slot.status = 'error'
+      // No HTTP status reached the client — nginx most often slams the
+      // connection when client_max_body_size is exceeded (default 1M).
+      slot.error = file.size > 1024 * 1024
+        ? `连接被网关断开(可能文件 ${(file.size / 1024 / 1024).toFixed(1)}MB 超过 nginx client_max_body_size 上限,需管理员 reload nginx 配置)`
+        : '网络错误'
+      resolve()
+    }
     xhr.onabort = () => { slot.status = 'error'; slot.error = '已取消'; resolve() }
     xhr.send(fd)
   })
@@ -1539,18 +1556,42 @@ async function doMkdir() {
 .upload-bar {
   margin-top: 6px;
   width: 100%;
-  height: 6px;
-  background: var(--tint-soft, rgba(99, 102, 241, 0.08));
+  height: 8px;
+  background: rgba(0, 0, 0, 0.06);
   border-radius: 999px;
   overflow: hidden;
+  position: relative;
 }
 
-.upload-bar-sm { height: 4px; }
+.upload-bar-sm { height: 5px; }
 
 .upload-bar-fill {
   height: 100%;
+  min-width: 2px;
   background: var(--accent);
   border-radius: 999px;
   transition: width 120ms linear;
+  /* Subtle animated stripe so 0% looks alive, not "stuck full". */
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.18) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0.18) 75%,
+    transparent 75%
+  );
+  background-size: 14px 14px;
+  animation: upload-bar-stripe 1.2s linear infinite;
+}
+
+.upload-bar-fill[style*="width: 0%"],
+.upload-bar-fill[style*="width: 100%"] {
+  animation: none;
+}
+
+@keyframes upload-bar-stripe {
+  from { background-position: 0 0; }
+  to   { background-position: 14px 0; }
 }
 </style>
