@@ -189,8 +189,10 @@
         </div>
       </Teleport>
 
-      <!-- 蓝信 SSO（由 PORTAL_SSO_HIDDEN env 控制是否展示） -->
-      <div v-if="!ssoHidden" class="section-card settings-section">
+      <!-- 蓝信 SSO（蓝信应用接入审批未通过,UI 暂时不展示。审批通过后把
+           v-if="false" 删掉、或改回 v-if="!ssoHidden" 即可恢复;后端 SSO
+           路由与配置存储均保留,不会丢 productCode / secretKey 等） -->
+      <div v-if="false" class="section-card settings-section">
         <div class="section-header">
           <div class="section-head-row">
             <div>
