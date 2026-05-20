@@ -239,7 +239,9 @@ function close() {
 <style scoped>
 .skill-files-modal {
   width: min(900px, 92vw);
-  max-height: 84vh;
+  /* 用 height 而非 max-height — 否则 flex 子项收缩到 fit-content,
+     SKILL.md 这种短文件 / 编辑态空 textarea 会让模态塌缩到只有几十像素高。 */
+  height: min(720px, 84vh);
   display: flex;
   flex-direction: column;
 }
@@ -354,12 +356,16 @@ function close() {
 .sfm-icon { flex-shrink: 0; }
 .sfm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 右栏:内容 */
+/* 右栏:内容 —— flex column 让 actions 行(固定高)+ 主体(flex:1)正确撑高 */
 .sfm-content {
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
-  padding: 18px 22px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* padding 下放到 .sfm-md/.sfm-pre/.sfm-edit,避免 actions 内被裹一层 padding */
+  padding: 0;
 }
 
 .sfm-hint,
@@ -367,16 +373,20 @@ function close() {
   color: var(--text-muted);
   font-size: var(--text-sm);
   padding: 16px;
+  flex: 1;
 }
 .sfm-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
 }
 
 .sfm-pre {
   margin: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 18px;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
@@ -386,7 +396,15 @@ function close() {
 }
 
 /* markdown 预览(v-html 内容需用 :deep) */
-.sfm-md { font-size: var(--text-sm); line-height: 1.7; color: var(--text-primary); }
+.sfm-md {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px;
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--text-primary);
+}
 .sfm-md :deep(h1) { font-size: 20px; font-weight: 700; margin: 16px 0 10px; }
 .sfm-md :deep(h2) { font-size: 17px; font-weight: 700; margin: 14px 0 8px; }
 .sfm-md :deep(h3) { font-size: 15px; font-weight: 600; margin: 12px 0 6px; }
