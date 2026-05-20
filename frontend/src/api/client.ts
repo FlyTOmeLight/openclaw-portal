@@ -283,11 +283,36 @@ export const api = {
       const form = new FormData()
       form.append('confirm', 'true')   // MUST precede the file part so it parses
       form.append('file', file)
-      return fetch(`${BASE}/system/upgrade`, { method: 'POST', body: form }).then(async r => {
-        const json = await r.json()
-        if (!r.ok) throw new Error(json.error ?? '升级失败')
-        return json as { type: string; version: string; restarting: boolean }
-      })
+      // The backend may be killed by systemd-run BEFORE the response is flushed
+      // for backend-* upgrades. Fetch can resolve with a non-JSON body (nginx
+      // 502 HTML) or reject outright. Treat any non-JSON response as a probable
+      // mid-restart success — let the caller fall through to polling, which is
+      // the authoritative source of the actual outcome.
+      return fetch(`${BASE}/system/upgrade`, { method: 'POST', body: form })
+        .then(async r => {
+          const text = await r.text()
+          // Try JSON first; if it parses, trust it.
+          try {
+            const json = JSON.parse(text)
+            if (!r.ok) throw new Error(json.error ?? '升级失败')
+            return json as { type: string; version: string; restarting: boolean }
+          } catch (e) {
+            // Body is HTML / empty / partial. If status looks like a real error
+            // (4xx that isn't an in-flight restart) surface it; otherwise assume
+            // the backend started the upgrade and got killed mid-response.
+            if (r.status >= 400 && r.status < 500 && r.status !== 408) {
+              throw new Error(`升级失败 (HTTP ${r.status})`)
+            }
+            return { type: 'unknown', version: '', restarting: true }
+          }
+        })
+        .catch(err => {
+          // Network error mid-restart — also a probable success.
+          if (err instanceof TypeError) {
+            return { type: 'unknown', version: '', restarting: true }
+          }
+          throw err
+        })
     },
     rollback: () => req<{ type: string; restarting: boolean }>('POST', '/system/upgrade/rollback'),
     upgradeStatus: () => req<{
