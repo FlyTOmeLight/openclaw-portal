@@ -538,10 +538,16 @@ async function startUpload(files: File[]) {
   if (!uploadingActive.value && uploadQueue.value.length) uploadQueue.value = []
 
   const dir = currentPath.value
-  const slots: UploadingFile[] = files.map(f => ({
+  // Push first, then grab the reactive proxies back. Plain objects pushed into
+  // a Vue 3 reactive array are wrapped on push; the original reference stays
+  // plain. Mutations on the plain ref don't propagate — overallPercent stayed
+  // at 0% even after slot.status='done'. Use the reactive proxies instead.
+  const initial: UploadingFile[] = files.map(f => ({
     name: f.name, size: f.size, loaded: 0, status: 'pending',
   }))
-  uploadQueue.value.push(...slots)
+  const startIdx = uploadQueue.value.length
+  uploadQueue.value.push(...initial)
+  const slots = uploadQueue.value.slice(startIdx, startIdx + initial.length)
   uploadingActive.value = true
 
   // Sequential upload — keeps the per-file progress readable and avoids
