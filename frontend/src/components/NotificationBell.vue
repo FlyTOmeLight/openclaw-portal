@@ -207,11 +207,11 @@ onBeforeUnmount(() => {
 .notif-btn {
   position: relative;
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--sidebar-icon-border);
   border-radius: 6px;
   padding: 4px 8px;
   cursor: pointer;
-  color: rgba(255,255,255,0.60);
+  color: var(--sidebar-icon);
   transition: background 0.12s, color 0.12s, border-color 0.12s;
   display: inline-flex;
   align-items: center;
@@ -219,9 +219,9 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 .notif-btn:hover {
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.9);
-  border-color: rgba(255,255,255,0.18);
+  background: var(--sidebar-icon-hover-bg);
+  color: var(--sidebar-icon-hover);
+  border-color: var(--sidebar-icon-border);
 }
 .notif-btn.has-unread {
   background: color-mix(in srgb, #ef4444 20%, transparent);

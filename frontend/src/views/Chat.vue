@@ -989,9 +989,63 @@ async function loadSessionHistory(state: AgentConversationState, agentId: string
       })
       .filter(m => !m._isTool && (m.text || m.steps?.length))
       .map(({ _isTool, ...m }): Message => m)
+
+    // Backfill from the raw session JSONL (authoritative on-disk source) when
+    // the gateway's chat.history projection returned an empty assistant turn.
+    // The gateway's sanitizeAssistantPhasedContentBlocks drops text blocks
+    // whose phase signature is not "final_answer", which strips Qwen3-style
+    // commentary turns that were visible during streaming. The raw JSONL is
+    // unprojected, so its text is what the model actually emitted.
     if (msgs.length) {
-      state.messages = msgs
-      await saveMessages(msgs.map(m => msgToStored(m, sessionKey)))
+      try {
+        const rawSession = await api.sessions.byKey(agentId, sessionKey)
+        const rawById = new Map<string, typeof rawSession.messages[number]>()
+        for (const rm of rawSession.messages) {
+          if (rm.id) rawById.set(rm.id, rm)
+        }
+        for (const m of msgs) {
+          if (m.role !== 'assistant') continue
+          const raw = rawById.get(m.id)
+          if (!raw) continue
+          if ((!m.text || !m.text.trim()) && raw.text) m.text = raw.text
+          if (!m.reasoning && raw.thinking) m.reasoning = raw.thinking
+        }
+      } catch {
+        // Raw JSONL unavailable (no sessions.json mapping, or remote gateway
+        // not co-located with portal). Fall through to IndexedDB backfill.
+      }
+    }
+
+    // Final fallback: preserve text/reasoning/steps from IndexedDB when both
+    // the projected gateway history and the raw JSONL backfill came up empty
+    // (matched by role + nearest createdAt within 5 min). This covers the
+    // case where the gateway is on a different host and we have no JSONL
+    // access, but the same browser saw the response during streaming.
+    if (msgs.length && local.length) {
+      const localCached = local.map(storedToMsg).filter(m => m.text || m.steps?.length)
+      const TOLERANCE_MS = 5 * 60 * 1000
+      for (const m of msgs) {
+        if (m.role !== 'assistant') continue
+        if (m.text && m.text.trim()) continue
+        if (m.steps?.length) continue
+        const localMatch = localCached
+          .filter(l => l.role === 'assistant' && (l.text || l.steps?.length))
+          .map(l => ({ l, delta: Math.abs((l.createdAt || 0) - (m.createdAt || 0)) }))
+          .filter(({ delta }) => delta <= TOLERANCE_MS)
+          .sort((a, b) => a.delta - b.delta)[0]?.l
+        if (!localMatch) continue
+        if (!m.text && localMatch.text) m.text = localMatch.text
+        if (!m.reasoning && localMatch.reasoning) m.reasoning = localMatch.reasoning
+        if (!m.steps?.length && localMatch.steps?.length) m.steps = localMatch.steps
+      }
+    }
+
+    // Drop assistant turns that ended up with no displayable content even after
+    // re-merging from local cache, so the UI doesn't render blank bubbles.
+    const visible = msgs.filter(m => m.role === 'user' || m.text || m.steps?.length)
+    if (visible.length) {
+      state.messages = visible
+      await saveMessages(visible.map(m => msgToStored(m, sessionKey)))
       await nextTick(); jumpToBottom()
     }
   } catch (e) {
@@ -1026,6 +1080,7 @@ async function sendViaWs(
   return new Promise<void>((resolve, reject) => {
     function cleanup() {
       if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null }
+      cancelSettle()
       const idx = chatEventHandlers.indexOf(eventHandler)
       if (idx !== -1) chatEventHandlers.splice(idx, 1)
       const aidx = agentEventHandlers.indexOf(agentHandler)
@@ -1063,6 +1118,51 @@ async function sendViaWs(
       } catch {}
     }
 
+    // ── Multi-run accumulation ────────────────────────────────────────────────
+    // Gateway broadcasts one chat:final per runId. An agentic turn that calls
+    // tools spans MULTIPLE runIds: commentary run → tool call run → tool
+    // result digestion run → final answer run. Treating the first chat:final
+    // as conversation end (the previous behaviour) cut off the bubble while
+    // the gateway was still emitting tool events for the next run — the bug
+    // the user observed where control-ui kept streaming but portal looked
+    // interrupted. Track text per runId in observation order and concatenate.
+    const textByRun = new Map<string, string>()
+    const reasoningByRun = new Map<string, string>()
+    const runOrder: string[] = []
+    function rememberRun(runId: string | undefined): string {
+      const key = runId || '__norun__'
+      if (!runOrder.includes(key)) runOrder.push(key)
+      return key
+    }
+    function flushAccumulatedText() {
+      const text = runOrder.map(r => textByRun.get(r) || '').filter(Boolean).join('\n\n')
+      const reasoning = runOrder.map(r => reasoningByRun.get(r) || '').filter(Boolean).join('\n\n')
+      if (text && text.length >= assistantMsg.text.length) assistantMsg.text = text
+      if (reasoning && reasoning.length >= (assistantMsg.reasoning?.length ?? 0)) {
+        assistantMsg.reasoning = reasoning
+      }
+    }
+
+    // After a chat:final, schedule a short idle settle. If no further chat or
+    // agent events arrive in this window the run is truly done; otherwise the
+    // next event cancels the settle and we keep streaming. This replaces the
+    // old finish-on-first-final behaviour without losing the natural end.
+    const POST_FINAL_IDLE_MS = 8_000
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+    function cancelSettle() {
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null }
+    }
+    function scheduleSettle() {
+      cancelSettle()
+      settleTimer = setTimeout(() => {
+        settleTimer = null
+        if (!resolved) {
+          flushAccumulatedText()
+          finish()
+        }
+      }, POST_FINAL_IDLE_MS)
+    }
+
     const eventHandler = (payload: any) => {
       if (resolved || !payload) return
       // sessionKey 过滤
@@ -1070,34 +1170,42 @@ async function sendViaWs(
 
       const { state: evtState, runId, message } = payload
       if (runId) currentRunId = runId
+      const runKey = rememberRun(runId)
+      cancelSettle()
 
       if (evtState === 'delta') {
         resetSafety()
         const text = extractGatewayText(message)
         const reasoning = extractGatewayReasoning(message)
-        if (reasoning && reasoning.length > (assistantMsg.reasoning?.length ?? 0)) {
-          assistantMsg.reasoning = reasoning
+        if (reasoning) {
+          reasoningByRun.set(runKey, reasoning)
           assistantMsg.phase = 'thinking'
-          scheduleScroll()
         }
-        if (text && text.length > assistantMsg.text.length) {
-          assistantMsg.text = text
+        if (text) {
+          textByRun.set(runKey, text)
           assistantMsg.phase = 'replying'
-          scheduleScroll()
         }
+        flushAccumulatedText()
+        scheduleScroll()
         return
       }
 
       if (evtState === 'final') {
         const text = extractGatewayText(message)
         const reasoning = extractGatewayReasoning(message)
-        if (reasoning) assistantMsg.reasoning = reasoning
-        if (text) { assistantMsg.text = text; scheduleScroll() }
-        finish()
+        if (reasoning) reasoningByRun.set(runKey, reasoning)
+        if (text) textByRun.set(runKey, text)
+        flushAccumulatedText()
+        scheduleScroll()
+        // Don't finish() — the agent may still run more turns (tool follow-up
+        // runs). Start an idle settle that finalises only if no further
+        // chat/agent events show up within POST_FINAL_IDLE_MS.
+        scheduleSettle()
         return
       }
 
       if (evtState === 'aborted') {
+        flushAccumulatedText()
         if (!assistantMsg.text) assistantMsg.text = '（已中断）'
         assistantMsg.phase = 'aborted'
         finish()
@@ -1105,6 +1213,7 @@ async function sendViaWs(
       }
 
       if (evtState === 'error') {
+        flushAccumulatedText()
         const errMsg = payload.errorMessage ?? payload.error?.message ?? '未知错误'
         if (assistantMsg.text) {
           // 已有部分输出，不报错，直接结束
@@ -1120,9 +1229,14 @@ async function sendViaWs(
     const agentHandler = (payload: any) => {
       if (resolved || !payload) return
       if (payload.sessionKey && payload.sessionKey !== sessionKey) return
-      if (currentRunId && payload.runId && payload.runId !== currentRunId) return
-      if (payload.runId && !currentRunId) currentRunId = payload.runId
+      // Allow tool events from new sub-runs (tool follow-up turns) — previously
+      // mismatched runIds were dropped, which silenced the tool step cards.
+      if (payload.runId) currentRunId = payload.runId
       resetSafety()
+      // A tool event after chat:final means the run is not actually idle yet,
+      // so abort any pending post-final settle that would have closed the
+      // bubble.
+      cancelSettle()
 
       if (payload.stream === 'tool') {
         if (!assistantMsg.steps) assistantMsg.steps = []

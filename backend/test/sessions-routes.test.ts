@@ -118,4 +118,54 @@ describe('sessionsRoutes', () => {
 
     await app.close()
   })
+
+  it('looks up a session by sessionKey via /api/sessions/by-key', async () => {
+    const openclawHome = await createSessionFixture()
+    const app = Fastify()
+    await sessionsRoutes(app, openclawHome)
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/sessions/by-key?agentId=main&sessionKey=agent:main:main',
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      agentId: 'main',
+      sessionId: 'session-1',
+      sessionKey: 'agent:main:main',
+      loadedMessageCount: 3,
+    })
+    expect(response.json().messages.map((message: any) => message.id)).toEqual(['m1', 'm2', 'm3'])
+
+    await app.close()
+  })
+
+  it('returns 404 for an unknown sessionKey on by-key lookup', async () => {
+    const openclawHome = await createSessionFixture()
+    const app = Fastify()
+    await sessionsRoutes(app, openclawHome)
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/sessions/by-key?agentId=main&sessionKey=does-not-exist',
+    })
+
+    expect(response.statusCode).toBe(404)
+    await app.close()
+  })
+
+  it('rejects by-key requests missing the sessionKey query param', async () => {
+    const openclawHome = await createSessionFixture()
+    const app = Fastify()
+    await sessionsRoutes(app, openclawHome)
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/sessions/by-key?agentId=main',
+    })
+
+    expect(response.statusCode).toBe(400)
+    await app.close()
+  })
 })

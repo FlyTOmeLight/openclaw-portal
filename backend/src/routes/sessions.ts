@@ -135,6 +135,62 @@ export async function sessionsRoutes(app: FastifyInstance, openclawHome: string)
     }))
   })
 
+  // Shared helper: parse a JSONL session file, returning the same shape as
+  // GET /api/sessions/:agentId/:sessionId. Used by both that route and the
+  // session-key lookup route below.
+  async function loadParsedSession(
+    agentId: string,
+    sessionId: string,
+    tail: number | null,
+  ) {
+    const jsonlPath = join(agentsRoot, agentId, 'sessions', `${sessionId}.jsonl`)
+    if (!existsSync(jsonlPath)) return null
+
+    let sessionKey: string | null = null
+    try {
+      const raw = await readFile(join(agentsRoot, agentId, 'sessions', 'sessions.json'), 'utf-8')
+      const map: Record<string, { sessionId?: string }> = JSON.parse(raw)
+      for (const [key, val] of Object.entries(map)) {
+        if (val?.sessionId === sessionId) { sessionKey = key; break }
+      }
+    } catch {}
+
+    const content = await readFile(jsonlPath, 'utf-8')
+    const stats = createEmptyStats()
+    const messages: SessionMessage[] = []
+    let sessionEvent: any = null
+
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue
+      let event: any
+      try { event = JSON.parse(line) } catch { continue }
+      if (!sessionEvent && event.type === 'session') { sessionEvent = event; continue }
+      if (event.type !== 'message') continue
+
+      const message = parseSessionMessage(event)
+      updateStats(stats, message)
+
+      if (tail) {
+        messages.push(message)
+        if (messages.length > tail) messages.shift()
+        continue
+      }
+      messages.push(message)
+    }
+
+    return {
+      sessionId,
+      sessionKey,
+      agentId,
+      startedAt: sessionEvent?.timestamp ?? null,
+      cwd: sessionEvent?.cwd ?? null,
+      messages,
+      stats,
+      truncated: Boolean(tail && stats.messageCount > messages.length),
+      loadedMessageCount: messages.length,
+    }
+  }
+
   // GET /api/sessions/:agentId/:sessionId — read parsed messages for a session
   app.get<{ Params: { agentId: string; sessionId: string }; Querystring: { tail?: string } }>(
     '/api/sessions/:agentId/:sessionId',
@@ -144,68 +200,51 @@ export async function sessionsRoutes(app: FastifyInstance, openclawHome: string)
         return reply.status(400).send({ error: 'Invalid id' })
       }
 
-      const jsonlPath = join(agentsRoot, agentId, 'sessions', `${sessionId}.jsonl`)
-      if (!existsSync(jsonlPath)) return reply.status(404).send({ error: 'Session not found' })
+      const requestedTail = Number.parseInt(req.query.tail ?? '', 10)
+      const tail = Number.isFinite(requestedTail) && requestedTail > 0 ? requestedTail : null
 
-      // Look up session key from sessions.json
-      let sessionKey: string | null = null
+      const result = await loadParsedSession(agentId, sessionId, tail)
+      if (!result) return reply.status(404).send({ error: 'Session not found' })
+      return result
+    }
+  )
+
+  // GET /api/sessions/by-key?agentId=…&sessionKey=…&tail=…
+  // Resolves a gateway-side session key (e.g. agent:main:portal:<uuid>) to the
+  // backing session.jsonl, then returns the same parsed shape as the route
+  // above. Lets Chat.vue load history from the raw JSONL — which preserves
+  // every assistant text block — instead of the gateway's lossy
+  // chat.history projection (which strips non-final_answer phase text and
+  // produces blank assistant bubbles for Qwen3-style commentary turns).
+  app.get<{ Querystring: { agentId?: string; sessionKey?: string; tail?: string } }>(
+    '/api/sessions/by-key',
+    async (req, reply) => {
+      const agentId = req.query.agentId ?? ''
+      const sessionKey = req.query.sessionKey ?? ''
+      if (!agentId || agentId.includes('/') || agentId.includes('..')) {
+        return reply.status(400).send({ error: 'Invalid agentId' })
+      }
+      if (!sessionKey) return reply.status(400).send({ error: 'Missing sessionKey' })
+
+      // Look up sessionId from sessions.json by sessionKey
+      let sessionId: string | null = null
       try {
         const raw = await readFile(join(agentsRoot, agentId, 'sessions', 'sessions.json'), 'utf-8')
         const map: Record<string, { sessionId?: string }> = JSON.parse(raw)
-        for (const [key, val] of Object.entries(map)) {
-          if (val?.sessionId === sessionId) { sessionKey = key; break }
-        }
+        const entry = map[sessionKey]
+        if (entry?.sessionId) sessionId = entry.sessionId
       } catch {}
+      if (!sessionId) return reply.status(404).send({ error: 'Session key not found' })
+      if (sessionId.includes('/') || sessionId.includes('..')) {
+        return reply.status(400).send({ error: 'Invalid sessionId' })
+      }
 
       const requestedTail = Number.parseInt(req.query.tail ?? '', 10)
       const tail = Number.isFinite(requestedTail) && requestedTail > 0 ? requestedTail : null
 
-      // Parse JSONL
-      const content = await readFile(jsonlPath, 'utf-8')
-      const stats = createEmptyStats()
-      const messages: SessionMessage[] = []
-      let sessionEvent: any = null
-
-      for (const line of content.split('\n')) {
-        if (!line.trim()) continue
-
-        let event: any
-        try {
-          event = JSON.parse(line)
-        } catch {
-          continue
-        }
-
-        if (!sessionEvent && event.type === 'session') {
-          sessionEvent = event
-          continue
-        }
-
-        if (event.type !== 'message') continue
-
-        const message = parseSessionMessage(event)
-        updateStats(stats, message)
-
-        if (tail) {
-          messages.push(message)
-          if (messages.length > tail) messages.shift()
-          continue
-        }
-
-        messages.push(message)
-      }
-
-      return {
-        sessionId,
-        sessionKey,
-        agentId,
-        startedAt: sessionEvent?.timestamp ?? null,
-        cwd: sessionEvent?.cwd ?? null,
-        messages,
-        stats,
-        truncated: Boolean(tail && stats.messageCount > messages.length),
-        loadedMessageCount: messages.length,
-      }
+      const result = await loadParsedSession(agentId, sessionId, tail)
+      if (!result) return reply.status(404).send({ error: 'Session not found' })
+      return result
     }
   )
 

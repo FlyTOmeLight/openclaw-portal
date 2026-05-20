@@ -322,6 +322,35 @@ export const api = {
       truncated: boolean
       loadedMessageCount: number
     }>('GET', `/sessions/${encodeURIComponent(agentId)}/${encodeURIComponent(sessionId)}${options?.tail ? `?tail=${encodeURIComponent(String(options.tail))}` : ''}`),
+    // Look up a session by its gateway-side session key (e.g.
+    // `agent:main:portal:<uuid>`). Returns the same shape as getDetail above.
+    // Used by Chat.vue to backfill assistant text that the gateway's
+    // chat.history projection strips (non-final_answer phase text blocks).
+    byKey: (agentId: string, sessionKey: string, options?: { tail?: number }) => req<{
+      sessionId: string
+      sessionKey: string | null
+      agentId: string
+      startedAt: string | null
+      cwd: string | null
+      messages: Array<{
+        id: string
+        role: 'user' | 'assistant' | 'toolResult'
+        timestamp: string
+        text: string
+        thinking: string
+        toolCalls: Array<{ id: string; name: string; arguments: any }>
+        toolResults: Array<{ toolCallId: string; content: string }>
+      }>
+      stats: {
+        messageCount: number
+        userCount: number
+        assistantCount: number
+        toolCallCount: number
+        toolResultCount: number
+      }
+      truncated: boolean
+      loadedMessageCount: number
+    }>('GET', `/sessions/by-key?agentId=${encodeURIComponent(agentId)}&sessionKey=${encodeURIComponent(sessionKey)}${options?.tail ? `&tail=${encodeURIComponent(String(options.tail))}` : ''}`),
     exportUrl: (agentId: string, sessionId: string) =>
       `${BASE}/sessions/${encodeURIComponent(agentId)}/${encodeURIComponent(sessionId)}/export`,
     clearAgent: (agentId: string) => req<{ ok: boolean; deleted: number }>('DELETE', `/sessions/${encodeURIComponent(agentId)}`),
@@ -363,7 +392,13 @@ export const api = {
     runs: (id: string, limit = 50) => req<any[]>('GET', `/cron/${encodeURIComponent(id)}/runs?limit=${limit}`),
   },
   dreaming: {
-    status: () => req<{ agentId: string; dreaming: any | null }>('GET', '/dreaming/status'),
+    // initializing/error 字段仅在 memory-core 冷启动 timeout 时由 backend 返回,
+    // UI 收到 initializing=true 时静默轮询而不弹 toast.error。
+    status: () =>
+      req<{ agentId: string; dreaming: any | null; initializing?: boolean; error?: string }>(
+        'GET',
+        '/dreaming/status',
+      ),
     getConfig: () => req<{ enabled: boolean; frequency: string; model: string; allowModelOverride: boolean }>('GET', '/dreaming/config'),
     saveConfig: (patch: { enabled?: boolean; frequency?: string; model?: string }) =>
       req<{ ok: boolean; result: any }>('PUT', '/dreaming/config', patch),

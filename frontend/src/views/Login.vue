@@ -246,8 +246,10 @@ async function refreshAuthStatus(base: string) {
   min-height: 100dvh;
 }
 
-/* ── 深色主题覆盖 ── */
-:global(body.theme-dark) .login-page {
+/* ── 深色主题覆盖 ──
+   整个选择器放进 :global() —— 否则 Vue scoped 会丢掉 .login-page,
+   暗色变量挂到 body 上、被 .login-page 上的浅色直接值盖住,登录页永远浅色。 */
+:global(body.theme-dark .login-page) {
   --lp-brand-grad: linear-gradient(152deg, #1e1b4b 0%, #312e81 36%, #4338ca 66%, #5b54e0 100%);
   --lp-m1: rgba(129, 140, 248, 0.46);
   --lp-m2: rgba(56, 189, 248, 0.26);

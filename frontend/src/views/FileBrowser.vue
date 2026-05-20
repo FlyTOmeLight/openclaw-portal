@@ -1,5 +1,24 @@
 <template>
-  <div class="page-shell page-shell-wide">
+  <div
+    class="page-shell page-shell-wide"
+    :class="{ 'is-dragging': isDragging }"
+    @dragover.prevent="onDragOver"
+    @dragenter.prevent="onDragEnter"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop"
+  >
+    <!-- Drag overlay -->
+    <div v-if="isDragging" class="drop-overlay">
+      <div class="drop-overlay-inner">
+        <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+          <path d="M28 38V12M16 24l12-12 12 12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 42v2a4 4 0 004 4h32a4 4 0 004-4v-2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+        </svg>
+        <div class="drop-overlay-title">释放以上传至 {{ currentPath }}</div>
+        <div class="drop-overlay-desc">支持多文件,单文件 ≤ 100MB</div>
+      </div>
+    </div>
+
     <div class="page-header">
       <div>
         <h1 class="page-title">文件管理</h1>
@@ -271,6 +290,44 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- ─── Upload progress panel (bottom-right, fixed) ──────────────── -->
+    <Teleport to="body">
+      <div v-if="uploadQueue.length > 0" class="upload-panel" role="status" aria-live="polite">
+        <div class="upload-panel-header">
+          <div class="upload-panel-title">
+            <span v-if="uploadingActive">上传中 ({{ uploadDoneCount }}/{{ uploadQueue.length }})</span>
+            <span v-else>上传完成 ({{ uploadOkCount }}/{{ uploadQueue.length }})</span>
+          </div>
+          <button class="upload-panel-close" @click="dismissUploadPanel" :disabled="uploadingActive" :title="uploadingActive ? '上传中…' : '关闭'">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <div class="upload-panel-overall">
+          <div class="upload-bar"><div class="upload-bar-fill" :style="{ width: overallPercent + '%' }"></div></div>
+          <span class="upload-percent">{{ overallPercent }}%</span>
+        </div>
+
+        <div class="upload-panel-list">
+          <div v-for="(u, idx) in uploadQueue" :key="idx" class="upload-item">
+            <div class="upload-item-row">
+              <span class="upload-item-name" :title="u.name">{{ u.name }}</span>
+              <span class="upload-item-status" :class="`upload-status-${u.status}`">
+                <span v-if="u.status === 'uploading'">{{ Math.round((u.loaded / Math.max(u.size, 1)) * 100) }}%</span>
+                <span v-else-if="u.status === 'done'">✓</span>
+                <span v-else-if="u.status === 'error'" :title="u.error">✕</span>
+                <span v-else>—</span>
+              </span>
+            </div>
+            <div v-if="u.status === 'uploading' || u.status === 'pending'" class="upload-bar upload-bar-sm">
+              <div class="upload-bar-fill" :style="{ width: (u.loaded / Math.max(u.size, 1) * 100) + '%' }"></div>
+            </div>
+            <div v-if="u.status === 'error'" class="upload-item-err">{{ u.error }}</div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -278,9 +335,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useConfirm } from '../composables/useConfirm.js'
+import { useNaiveToast } from '../composables/useNaiveToast.js'
 
 const route = useRoute()
 const confirm = useConfirm()
+const toast = useNaiveToast()
 
 const API_BASE = (import.meta.env.BASE_URL.replace(/\/$/, '') + '/api').replace(/\/{2,}/g, '/')
 
@@ -390,16 +449,140 @@ function formatDate(mtime: string): string {
 
 // ── Upload ──────────────────────────────────────────────────────────────────
 
-async function onFileInputChange(e: Event) {
-  const files = (e.target as HTMLInputElement).files
-  if (!files?.length) return
-  const formData = new FormData()
-  for (const f of files) formData.append('files', f)
-  await fetch(`${API_BASE}/files/upload?dir=${encodeURIComponent(currentPath.value)}`, {
-    method: 'POST', body: formData,
+interface UploadingFile {
+  name: string
+  size: number
+  loaded: number
+  status: 'pending' | 'uploading' | 'done' | 'error'
+  error?: string
+}
+
+const uploadQueue = ref<UploadingFile[]>([])
+const uploadingActive = ref(false)
+let panelDismissTimer: number | null = null
+
+const uploadDoneCount = computed(() =>
+  uploadQueue.value.filter(u => u.status === 'done' || u.status === 'error').length
+)
+const uploadOkCount = computed(() =>
+  uploadQueue.value.filter(u => u.status === 'done').length
+)
+const overallPercent = computed(() => {
+  if (!uploadQueue.value.length) return 0
+  const total = uploadQueue.value.reduce((s, u) => s + Math.max(u.size, 1), 0)
+  const done = uploadQueue.value.reduce((s, u) => s + (u.status === 'done' ? Math.max(u.size, 1) : u.loaded), 0)
+  return Math.round((done / total) * 100)
+})
+
+function dismissUploadPanel() {
+  if (uploadingActive.value) return
+  uploadQueue.value = []
+  if (panelDismissTimer) { clearTimeout(panelDismissTimer); panelDismissTimer = null }
+}
+
+// XHR-based upload so we can read upload.onprogress (fetch can't).
+function uploadOne(file: File, dir: string, slot: UploadingFile): Promise<void> {
+  return new Promise(resolve => {
+    const fd = new FormData()
+    fd.append('files', file)
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API_BASE}/files/upload?dir=${encodeURIComponent(dir)}`)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        slot.loaded = e.loaded
+        slot.status = 'uploading'
+      }
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        slot.loaded = slot.size
+        slot.status = 'done'
+      } else {
+        slot.status = 'error'
+        // 413 or nginx HTML page = reverse-proxy rejected before reaching Fastify.
+        const isHtml = (xhr.getResponseHeader('content-type') ?? '').includes('text/html')
+        slot.error = xhr.status === 413 || isHtml
+          ? `文件过大,被网关拒绝 (HTTP ${xhr.status})。请联系管理员调整 nginx client_max_body_size。`
+          : `HTTP ${xhr.status}`
+      }
+      resolve()
+    }
+    xhr.onerror = () => { slot.status = 'error'; slot.error = '网络错误'; resolve() }
+    xhr.onabort = () => { slot.status = 'error'; slot.error = '已取消'; resolve() }
+    xhr.send(fd)
   })
+}
+
+async function startUpload(files: File[]) {
+  if (!files.length) return
+  if (panelDismissTimer) { clearTimeout(panelDismissTimer); panelDismissTimer = null }
+
+  // Clear any prior completed panel before starting new batch.
+  if (!uploadingActive.value && uploadQueue.value.length) uploadQueue.value = []
+
+  const dir = currentPath.value
+  const slots: UploadingFile[] = files.map(f => ({
+    name: f.name, size: f.size, loaded: 0, status: 'pending',
+  }))
+  uploadQueue.value.push(...slots)
+  uploadingActive.value = true
+
+  // Sequential upload — keeps the per-file progress readable and avoids
+  // hammering the reverse proxy with parallel multipart streams.
+  for (let i = 0; i < files.length; i++) await uploadOne(files[i], dir, slots[i])
+
+  uploadingActive.value = false
+  const okCount = slots.filter(s => s.status === 'done').length
+  const errCount = slots.length - okCount
+  if (okCount) toast.success(`已上传 ${okCount} 个文件${errCount ? ` (失败 ${errCount})` : ''}`)
+  else if (errCount) toast.error(`上传失败 (${errCount}/${slots.length}):${slots.find(s => s.error)?.error ?? ''}`)
+
+  // Auto-dismiss panel 5s after success-only completion.
+  if (!errCount) panelDismissTimer = window.setTimeout(() => { uploadQueue.value = [] }, 5000)
+
   load(currentPath.value)
-  ;(e.target as HTMLInputElement).value = ''
+}
+
+async function onFileInputChange(e: Event) {
+  const inputEl = e.target as HTMLInputElement
+  const files = inputEl.files ? Array.from(inputEl.files) : []
+  inputEl.value = ''
+  await startUpload(files)
+}
+
+// ── Drag and drop ───────────────────────────────────────────────────────────
+
+const isDragging = ref(false)
+let dragDepth = 0  // counter to handle nested dragenter/leave correctly
+
+function isFileDrag(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+}
+
+function onDragOver(e: DragEvent) {
+  if (isFileDrag(e) && e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+function onDragEnter(e: DragEvent) {
+  if (!isFileDrag(e)) return
+  dragDepth++
+  isDragging.value = true
+}
+function onDragLeave(e: DragEvent) {
+  if (!isFileDrag(e)) return
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) isDragging.value = false
+}
+async function onDrop(e: DragEvent) {
+  dragDepth = 0
+  isDragging.value = false
+  if (!isFileDrag(e)) return
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  // Filter directories — DataTransferItem dir entries come through with size 0
+  // and type ''. Skipping rather than recursing keeps scope tight; matches the
+  // file input behavior (no folder upload).
+  const real = files.filter(f => f.size > 0 || f.type)
+  if (real.length < files.length) toast.warning('已忽略文件夹,仅上传文件')
+  await startUpload(real)
 }
 
 // ── Preview ─────────────────────────────────────────────────────────────────
@@ -1175,5 +1358,199 @@ async function doMkdir() {
 
   .file-actions { opacity: 1; }
   .path-meta { display: none; }
+}
+
+/* ── Drag-and-drop overlay ───────────────────────────────────────────────── */
+
+.page-shell { position: relative; }
+
+.page-shell.is-dragging::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: rgba(99, 102, 241, 0.04);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(99, 102, 241, 0.08);
+  backdrop-filter: blur(2px);
+  border-radius: var(--radius-lg);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 48px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(99, 102, 241, 0.18);
+  color: var(--accent-text);
+}
+
+.drop-overlay-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drop-overlay-desc {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* ── Upload progress panel ───────────────────────────────────────────────── */
+
+.upload-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 360px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  z-index: 9999;
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+
+.upload-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.upload-panel-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.upload-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.upload-panel-close:hover:not(:disabled) {
+  background: var(--tint-soft);
+  color: var(--text-primary);
+}
+
+.upload-panel-close:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.upload-panel-overall {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+
+.upload-percent {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+}
+
+.upload-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px 12px;
+}
+
+.upload-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft, transparent);
+}
+
+.upload-item:last-child { border-bottom: none; }
+
+.upload-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.upload-item-name {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.upload-item-status {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+  text-align: right;
+}
+
+.upload-status-uploading { color: var(--accent-text); }
+.upload-status-done      { color: #16a34a; }
+.upload-status-error     { color: #dc2626; }
+.upload-status-pending   { color: var(--text-muted); }
+
+.upload-item-err {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: #dc2626;
+  line-height: 1.4;
+}
+
+.upload-bar {
+  margin-top: 6px;
+  width: 100%;
+  height: 6px;
+  background: var(--tint-soft, rgba(99, 102, 241, 0.08));
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.upload-bar-sm { height: 4px; }
+
+.upload-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 120ms linear;
 }
 </style>
